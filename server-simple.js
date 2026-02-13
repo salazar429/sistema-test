@@ -10,42 +10,155 @@ const DB_FILE = path.join(__dirname, 'database.json');
 app.use(cors());
 app.use(express.json());
 
-// ========== FUNCIONES JSON ==========
+// ========== FUNCIONES JSON CON RESPALDO ==========
 function leerDB() {
     try {
         if (!fs.existsSync(DB_FILE)) {
+            // Datos iniciales completos
             const initialDB = {
+                categorias: [
+                    { id: 'cat_1', nombre: 'Ropa', descripcion: 'Prendas de vestir', activa: true },
+                    { id: 'cat_2', nombre: 'Calzado', descripcion: 'Zapatos y zapatillas', activa: true },
+                    { id: 'cat_3', nombre: 'Accesorios', descripcion: 'Bolsos, carteras, joyas', activa: true },
+                    { id: 'cat_4', nombre: 'Electrónica', descripcion: 'Dispositivos electrónicos', activa: true },
+                    { id: 'cat_5', nombre: 'Hogar', descripcion: 'Artículos para el hogar', activa: true },
+                    { id: 'cat_6', nombre: 'Otros', descripcion: 'Productos varios', activa: true }
+                ],
                 vendedoras: [
                     { id: 'v_1', nombre: 'María González', usuario: 'maria_g', password: '123456', status: 'activa', tienda: 'Tienda Centro' },
                     { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
                 ],
                 productos: [
-                    { id: 'p_1', nombre: 'PRODUCTO DE PRUEBA', categoria: 'prueba', precio: 99.99, stock: 100, minStock: 10, status: 'activo' }
+                    { 
+                        id: 'p_1', 
+                        nombre: 'PRODUCTO DE PRUEBA', 
+                        categoria: 'cat_1', 
+                        categoria_nombre: 'Ropa',
+                        precio: 99.99, 
+                        stock: 100, 
+                        minStock: 10, 
+                        status: 'activo' 
+                    }
                 ],
                 ventas: []
             };
             fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
+            console.log('✅ Archivo database.json creado con datos iniciales');
             return initialDB;
         }
-        return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        
+        const data = fs.readFileSync(DB_FILE, 'utf8');
+        return JSON.parse(data);
     } catch (error) {
-        return { vendedoras: [], productos: [], ventas: [] };
+        console.error('❌ Error leyendo database.json:', error);
+        return { categorias: [], vendedoras: [], productos: [], ventas: [] };
     }
 }
 
 function escribirDB(data) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    try {
+        // Hacer backup automático antes de escribir
+        if (fs.existsSync(DB_FILE)) {
+            const backupFile = DB_FILE.replace('.json', '_backup.json');
+            fs.copyFileSync(DB_FILE, backupFile);
+        }
+        
+        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+        console.log('💾 Cambios guardados en database.json');
+        return true;
+    } catch (error) {
+        console.error('❌ Error guardando database.json:', error);
+        return false;
+    }
 }
 
 // ========== RUTAS PÚBLICAS ==========
 app.get('/', (req, res) => {
     const db = leerDB();
     res.json({
-        mensaje: '✅ SERVIDOR CON JSON PERSISTENTE',
+        mensaje: '✅ SERVIDOR CON PERSISTENCIA JSON',
         timestamp: new Date().toISOString(),
+        categorias: db.categorias.length,
         vendedoras: db.vendedoras.length,
         productos: db.productos.length
     });
+});
+
+// ========== RUTAS PARA CATEGORÍAS ==========
+app.get('/api/categorias', (req, res) => {
+    const db = leerDB();
+    res.json(db.categorias.filter(c => c.activa !== false));
+});
+
+app.get('/api/dueno/categorias', (req, res) => {
+    const db = leerDB();
+    res.json(db.categorias);
+});
+
+app.post('/api/dueno/categorias', (req, res) => {
+    const { nombre, descripcion } = req.body;
+    const db = leerDB();
+    
+    if (!nombre) {
+        return res.status(400).json({ error: 'El nombre es obligatorio' });
+    }
+    
+    const nuevaCategoria = {
+        id: `cat_${Date.now()}`,
+        nombre: nombre,
+        descripcion: descripcion || '',
+        activa: true
+    };
+    
+    db.categorias.push(nuevaCategoria);
+    escribirDB(db);
+    
+    res.json({ success: true, categoria: nuevaCategoria });
+});
+
+app.put('/api/dueno/categorias/:id', (req, res) => {
+    const { id } = req.params;
+    const { nombre, descripcion, activa } = req.body;
+    const db = leerDB();
+    
+    const index = db.categorias.findIndex(c => c.id === id);
+    if (index === -1) {
+        return res.status(404).json({ error: 'Categoría no encontrada' });
+    }
+    
+    db.categorias[index] = {
+        ...db.categorias[index],
+        nombre: nombre || db.categorias[index].nombre,
+        descripcion: descripcion !== undefined ? descripcion : db.categorias[index].descripcion,
+        activa: activa !== undefined ? activa : db.categorias[index].activa
+    };
+    
+    escribirDB(db);
+    res.json({ success: true, categoria: db.categorias[index] });
+});
+
+app.delete('/api/dueno/categorias/:id', (req, res) => {
+    const { id } = req.params;
+    const db = leerDB();
+    
+    // Verificar si hay productos usando esta categoría
+    const productosUsando = db.productos.filter(p => p.categoria === id);
+    if (productosUsando.length > 0) {
+        return res.status(400).json({ 
+            error: 'No se puede eliminar: hay productos usando esta categoría',
+            productos: productosUsando.map(p => p.nombre)
+        });
+    }
+    
+    const index = db.categorias.findIndex(c => c.id === id);
+    if (index === -1) {
+        return res.status(404).json({ error: 'Categoría no encontrada' });
+    }
+    
+    db.categorias.splice(index, 1);
+    escribirDB(db);
+    
+    res.json({ success: true });
 });
 
 // ========== RUTAS PARA VENDEDORAS ==========
@@ -74,7 +187,15 @@ app.post('/api/login', (req, res) => {
 
 app.get('/api/productos', (req, res) => {
     const db = leerDB();
-    res.json(db.productos);
+    // Enriquecer productos con nombre de categoría
+    const productosConCategoria = db.productos.map(p => {
+        const categoria = db.categorias.find(c => c.id === p.categoria);
+        return {
+            ...p,
+            categoria_nombre: categoria ? categoria.nombre : 'General'
+        };
+    });
+    res.json(productosConCategoria);
 });
 
 // ========== RUTAS PARA DUEÑO - VENDEDORAS ==========
@@ -138,32 +259,35 @@ app.delete('/api/dueno/vendedoras/:id', (req, res) => {
 });
 
 // ========== RUTAS PARA DUEÑO - PRODUCTOS ==========
-
-// 1. OBTENER TODOS LOS PRODUCTOS
 app.get('/api/dueno/productos', (req, res) => {
     const db = leerDB();
-    res.json(db.productos);
+    // Enriquecer productos con nombre de categoría
+    const productosConCategoria = db.productos.map(p => {
+        const categoria = db.categorias.find(c => c.id === p.categoria);
+        return {
+            ...p,
+            categoria_nombre: categoria ? categoria.nombre : 'General'
+        };
+    });
+    res.json(productosConCategoria);
 });
 
-// 2. CREAR NUEVO PRODUCTO (⚠️ ESTA ES LA QUE FALTABA ⚠️)
 app.post('/api/dueno/productos', (req, res) => {
-    console.log('📦 Creando nuevo producto:', req.body);
-    
     const { nombre, categoria, precio, stock, minStock } = req.body;
     const db = leerDB();
     
-    // Validaciones básicas
     if (!nombre || !precio || stock === undefined) {
-        return res.status(400).json({ 
-            error: 'Nombre, precio y stock son obligatorios' 
-        });
+        return res.status(400).json({ error: 'Nombre, precio y stock son obligatorios' });
     }
     
-    // Crear nuevo producto con ID único
+    // Verificar que la categoría existe
+    const categoriaValida = db.categorias.find(c => c.id === categoria);
+    const categoriaId = categoriaValida ? categoria : 'cat_6'; // Por defecto "Otros"
+    
     const nuevoProducto = {
         id: `p_${Date.now()}`,
         nombre: nombre,
-        categoria: categoria || 'general',
+        categoria: categoriaId,
         precio: parseFloat(precio),
         stock: parseInt(stock),
         minStock: parseInt(minStock) || 5,
@@ -173,18 +297,19 @@ app.post('/api/dueno/productos', (req, res) => {
     db.productos.push(nuevoProducto);
     escribirDB(db);
     
-    console.log('✅ Producto creado:', nuevoProducto);
+    // Devolver con nombre de categoría
+    const categoriaNombre = db.categorias.find(c => c.id === categoriaId)?.nombre || 'General';
     
     res.json({
         success: true,
-        producto: nuevoProducto
+        producto: {
+            ...nuevoProducto,
+            categoria_nombre: categoriaNombre
+        }
     });
 });
 
-// 3. ACTUALIZAR PRODUCTO
 app.put('/api/dueno/productos/:id', (req, res) => {
-    console.log('✏️ Actualizando producto:', req.params.id, req.body);
-    
     const { id } = req.params;
     const { nombre, precio, stock, categoria, minStock } = req.body;
     const db = leerDB();
@@ -203,24 +328,25 @@ app.put('/api/dueno/productos/:id', (req, res) => {
         minStock: minStock !== undefined ? parseInt(minStock) : db.productos[index].minStock
     };
     
-    // Actualizar estado según stock
     db.productos[index].status = db.productos[index].stock <= db.productos[index].minStock 
         ? 'bajo stock' 
         : 'activo';
     
     escribirDB(db);
-    console.log('✅ Producto actualizado:', db.productos[index]);
+    
+    // Devolver con nombre de categoría
+    const categoriaNombre = db.categorias.find(c => c.id === db.productos[index].categoria)?.nombre || 'General';
     
     res.json({ 
         success: true, 
-        producto: db.productos[index] 
+        producto: {
+            ...db.productos[index],
+            categoria_nombre: categoriaNombre
+        }
     });
 });
 
-// 4. ELIMINAR PRODUCTO (OPCIONAL - POR SI LO NECESITAS)
 app.delete('/api/dueno/productos/:id', (req, res) => {
-    console.log('🗑️ Eliminando producto:', req.params.id);
-    
     const { id } = req.params;
     const db = leerDB();
     
@@ -237,11 +363,16 @@ app.delete('/api/dueno/productos/:id', (req, res) => {
 
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, () => {
-    console.log(`✅ Servidor JSON persistente en puerto ${PORT}`);
-    console.log(`📁 Archivo: database.json`);
-    console.log(`\n📦 ENDPOINTS DE PRODUCTOS:`);
-    console.log(`   GET    /api/dueno/productos - Listar productos`);
-    console.log(`   POST   /api/dueno/productos - Crear producto (⚠️ NUEVO)`);
-    console.log(`   PUT    /api/dueno/productos/:id - Actualizar producto`);
-    console.log(`   DELETE /api/dueno/productos/:id - Eliminar producto`);
+    console.log(`\n🚀===========================================`);
+    console.log(`✅ SERVIDOR JSON CON CATEGORÍAS`);
+    console.log(`=============================================`);
+    console.log(`🔗 URL: http://localhost:${PORT}`);
+    console.log(`📁 Archivo: database.json (con respaldo automático)`);
+    console.log(`\n📦 ENDPOINTS NUEVOS:`);
+    console.log(`   GET    /api/categorias - Categorías activas`);
+    console.log(`   GET    /api/dueno/categorias - Todas las categorías`);
+    console.log(`   POST   /api/dueno/categorias - Crear categoría`);
+    console.log(`   PUT    /api/dueno/categorias/:id - Editar categoría`);
+    console.log(`   DELETE /api/dueno/categorias/:id - Eliminar categoría`);
+    console.log(`=============================================\n`);
 });
