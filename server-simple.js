@@ -1,96 +1,65 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+const DB_FILE = path.join(__dirname, 'database.json');
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// ============ BASE DE DATOS EN MEMORIA ============
-const Database = {
-    // Vendedoras
-    vendedoras: [
-        {
-            id: 'v_1',
-            nombre: 'María González',
-            usuario: 'maria_g',
-            password: '123456',
-            status: 'activa',
-            tienda: 'Tienda Centro'
-        },
-        {
-            id: 'v_2',
-            nombre: 'Ana Rodríguez',
-            usuario: 'ana_r',
-            password: '123456',
-            status: 'activa',
-            tienda: 'Tienda Norte'
+// ========== FUNCIONES JSON ==========
+function leerDB() {
+    try {
+        if (!fs.existsSync(DB_FILE)) {
+            const initialDB = {
+                vendedoras: [
+                    { id: 'v_1', nombre: 'María González', usuario: 'maria_g', password: '123456', status: 'activa', tienda: 'Tienda Centro' },
+                    { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
+                ],
+                productos: [
+                    { id: 'p_1', nombre: 'PRODUCTO DE PRUEBA', categoria: 'prueba', precio: 99.99, stock: 100, minStock: 10, status: 'activo' }
+                ],
+                ventas: []
+            };
+            fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
+            return initialDB;
         }
-    ],
-    
-    // Productos - SOLO UNO DE PRUEBA
-    productos: [
-        {
-            id: 'p_1',
-            nombre: 'PRODUCTO DE PRUEBA',
-            categoria: 'prueba',
-            precio: 99.99,
-            stock: 100,
-            minStock: 10,
-            status: 'activo'
-        }
-    ],
-    
-    // Ventas
-    ventas: []
-};
+        return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    } catch (error) {
+        return { vendedoras: [], productos: [], ventas: [] };
+    }
+}
 
-// ============ RUTAS PÚBLICAS ============
+function escribirDB(data) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+}
 
-// Ruta raíz - test
+// ========== RUTAS ==========
+
+// RUTA RAÍZ
 app.get('/', (req, res) => {
+    const db = leerDB();
     res.json({
-        mensaje: '✅ SERVIDOR FUNCIONANDO',
+        mensaje: '✅ SERVIDOR CON JSON PERSISTENTE',
         timestamp: new Date().toISOString(),
-        vendedoras: Database.vendedoras.length,
-        productos: Database.productos.length,
-        endpoints: {
-            vendedoras: {
-                login: 'POST /api/login',
-                productos: 'GET /api/productos'
-            },
-            dueno: {
-                vendedoras: 'GET/POST /api/dueno/vendedoras',
-                productos: 'GET /api/dueno/productos'
-            }
-        }
+        vendedoras: db.vendedoras.length,
+        productos: db.productos.length
     });
 });
 
-// ============ RUTAS PARA VENDEDORAS ============
-
-// LOGIN - endpoint ÚNICO para vendedoras
+// LOGIN VENDEDORA
 app.post('/api/login', (req, res) => {
-    console.log('📱 Login intento:', req.body);
-    
     const { usuario, password } = req.body;
+    const db = leerDB();
     
-    if (!usuario || !password) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'Usuario y contraseña requeridos' 
-        });
-    }
-    
-    const vendedora = Database.vendedoras.find(v => 
-        v.usuario === usuario && 
-        v.password === password && 
-        v.status === 'activa'
+    const vendedora = db.vendedoras.find(v => 
+        v.usuario === usuario && v.password === password && v.status === 'activa'
     );
     
     if (vendedora) {
-        console.log('✅ Login exitoso:', vendedora.nombre);
         res.json({
             success: true,
             usuario: {
@@ -101,50 +70,37 @@ app.post('/api/login', (req, res) => {
             }
         });
     } else {
-        console.log('❌ Login fallido:', usuario);
-        res.status(401).json({
-            success: false,
-            error: 'Credenciales incorrectas'
-        });
+        res.status(401).json({ success: false, error: 'Credenciales incorrectas' });
     }
 });
 
-// OBTENER PRODUCTOS - para vendedoras
+// PRODUCTOS (vendedoras)
 app.get('/api/productos', (req, res) => {
-    console.log('📦 Enviando productos a vendedora');
-    res.json(Database.productos);
+    const db = leerDB();
+    res.json(db.productos);
 });
 
-// ============ RUTAS PARA DUEÑO ============
+// ========== RUTAS DUEÑO ==========
 
-// OBTENER TODAS LAS VENDEDORAS
+// OBTENER VENDEDORAS
 app.get('/api/dueno/vendedoras', (req, res) => {
-    console.log('👩‍💼 Enviando lista de vendedoras');
-    const vendedorasSinPassword = Database.vendedoras.map(v => ({
+    const db = leerDB();
+    const vendedorasSinPass = db.vendedoras.map(v => ({
         id: v.id,
         nombre: v.nombre,
         usuario: v.usuario,
         status: v.status,
         tienda: v.tienda
     }));
-    res.json(vendedorasSinPassword);
+    res.json(vendedorasSinPass);
 });
 
 // CREAR VENDEDORA
 app.post('/api/dueno/vendedoras', (req, res) => {
-    console.log('👩‍💼 Crear vendedora:', req.body);
-    
     const { nombre, usuario, password, tienda } = req.body;
+    const db = leerDB();
     
-    // Validar
-    if (!nombre || !usuario || !password) {
-        return res.status(400).json({ 
-            error: 'Nombre, usuario y contraseña son obligatorios' 
-        });
-    }
-    
-    // Verificar si ya existe
-    const existe = Database.vendedoras.find(v => v.usuario === usuario);
+    const existe = db.vendedoras.find(v => v.usuario === usuario);
     if (existe) {
         return res.status(400).json({ error: 'El usuario ya existe' });
     }
@@ -155,11 +111,11 @@ app.post('/api/dueno/vendedoras', (req, res) => {
         usuario,
         password,
         status: 'activa',
-        tienda: tienda || 'Sin tienda'
+        tienda: tienda || 'Tienda General'
     };
     
-    Database.vendedoras.push(nuevaVendedora);
-    console.log('✅ Vendedora creada:', nuevaVendedora.nombre);
+    db.vendedoras.push(nuevaVendedora);
+    escribirDB(db);
     
     res.json({
         success: true,
@@ -173,118 +129,51 @@ app.post('/api/dueno/vendedoras', (req, res) => {
     });
 });
 
-// ACTUALIZAR VENDEDORA
-app.put('/api/dueno/vendedoras/:id', (req, res) => {
-    console.log('✏️ Actualizar vendedora:', req.params.id, req.body);
-    
-    const { id } = req.params;
-    const { nombre, usuario, password, status, tienda } = req.body;
-    
-    const index = Database.vendedoras.findIndex(v => v.id === id);
-    
-    if (index === -1) {
-        return res.status(404).json({ error: 'Vendedora no encontrada' });
-    }
-    
-    // Verificar si el usuario ya existe (excepto ella misma)
-    if (usuario) {
-        const existe = Database.vendedoras.find(v => 
-            v.usuario === usuario && v.id !== id
-        );
-        if (existe) {
-            return res.status(400).json({ error: 'El nombre de usuario ya existe' });
-        }
-    }
-    
-    Database.vendedoras[index] = {
-        ...Database.vendedoras[index],
-        nombre: nombre || Database.vendedoras[index].nombre,
-        usuario: usuario || Database.vendedoras[index].usuario,
-        password: password || Database.vendedoras[index].password,
-        status: status || Database.vendedoras[index].status,
-        tienda: tienda || Database.vendedoras[index].tienda
-    };
-    
-    res.json({
-        success: true,
-        vendedora: {
-            id: Database.vendedoras[index].id,
-            nombre: Database.vendedoras[index].nombre,
-            usuario: Database.vendedoras[index].usuario,
-            status: Database.vendedoras[index].status,
-            tienda: Database.vendedoras[index].tienda
-        }
-    });
-});
-
 // ELIMINAR VENDEDORA
 app.delete('/api/dueno/vendedoras/:id', (req, res) => {
-    console.log('🗑️ Eliminar vendedora:', req.params.id);
-    
     const { id } = req.params;
-    const index = Database.vendedoras.findIndex(v => v.id === id);
+    const db = leerDB();
     
+    const index = db.vendedoras.findIndex(v => v.id === id);
     if (index === -1) {
         return res.status(404).json({ error: 'Vendedora no encontrada' });
     }
     
-    Database.vendedoras.splice(index, 1);
+    db.vendedoras.splice(index, 1);
+    escribirDB(db);
     res.json({ success: true });
 });
 
-// OBTENER PRODUCTOS (para dueño)
+// PRODUCTOS (dueño)
 app.get('/api/dueno/productos', (req, res) => {
-    console.log('📦 Enviando productos al dueño');
-    res.json(Database.productos);
+    const db = leerDB();
+    res.json(db.productos);
 });
 
-// ACTUALIZAR PRODUCTO DE PRUEBA
+// ACTUALIZAR PRODUCTO
 app.put('/api/dueno/productos/:id', (req, res) => {
-    console.log('✏️ Actualizar producto:', req.params.id, req.body);
-    
     const { id } = req.params;
     const { nombre, precio, stock } = req.body;
+    const db = leerDB();
     
-    const index = Database.productos.findIndex(p => p.id === id);
-    
+    const index = db.productos.findIndex(p => p.id === id);
     if (index === -1) {
         return res.status(404).json({ error: 'Producto no encontrado' });
     }
     
-    Database.productos[index] = {
-        ...Database.productos[index],
-        nombre: nombre || Database.productos[index].nombre,
-        precio: precio ? parseFloat(precio) : Database.productos[index].precio,
-        stock: stock !== undefined ? parseInt(stock) : Database.productos[index].stock,
-        status: parseInt(stock) <= Database.productos[index].minStock ? 'bajo stock' : 'activo'
+    db.productos[index] = {
+        ...db.productos[index],
+        nombre: nombre || db.productos[index].nombre,
+        precio: precio !== undefined ? parseFloat(precio) : db.productos[index].precio,
+        stock: stock !== undefined ? parseInt(stock) : db.productos[index].stock
     };
     
-    console.log('✅ Producto actualizado:', Database.productos[index]);
-    res.json({ success: true, producto: Database.productos[index] });
+    escribirDB(db);
+    res.json({ success: true, producto: db.productos[index] });
 });
 
-// ============ INICIAR SERVIDOR ============
+// INICIAR SERVIDOR
 app.listen(PORT, () => {
-    console.log('\n🚀===========================================');
-    console.log('✅ SERVIDOR SIMPLIFICADO INICIADO');
-    console.log('=============================================');
-    console.log(`🔗 URL: http://localhost:${PORT}`);
-    console.log('📅 Fecha:', new Date().toLocaleString());
-    console.log('\n📊 DATOS DE PRUEBA:');
-    console.log('   Vendedoras:');
-    console.log('     - maria_g / 123456');
-    console.log('     - ana_r / 123456');
-    console.log('   Producto de prueba:');
-    console.log('     - PRODUCTO DE PRUEBA - $99.99');
-    console.log('\n📡 ENDPOINTS:');
-    console.log('   GET  / - Estado del servidor');
-    console.log('   POST /api/login - Login vendedoras');
-    console.log('   GET  /api/productos - Productos vendedoras');
-    console.log('   GET  /api/dueno/vendedoras - Lista vendedoras');
-    console.log('   POST /api/dueno/vendedoras - Crear vendedora');
-    console.log('   PUT  /api/dueno/vendedoras/:id - Actualizar');
-    console.log('   DELETE /api/dueno/vendedoras/:id - Eliminar');
-    console.log('   GET  /api/dueno/productos - Productos dueño');
-    console.log('   PUT  /api/dueno/productos/:id - Actualizar producto');
-    console.log('=============================================\n');
+    console.log(`✅ Servidor JSON persistente en puerto ${PORT}`);
+    console.log(`📁 Archivo: database.json`);
 });
