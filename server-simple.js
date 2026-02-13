@@ -10,35 +10,16 @@ const DB_FILE = path.join(__dirname, 'database.json');
 app.use(cors());
 app.use(express.json());
 
-// ========== FUNCIONES JSON CON RESPALDO Y LOGS ==========
+// ========== FUNCIONES JSON CON RESPALDO ==========
 function leerDB() {
     try {
         if (!fs.existsSync(DB_FILE)) {
-            console.log('📁 Creando nuevo archivo database.json con datos iniciales...');
+            console.log('📁 Creando nuevo archivo database.json...');
+            // SOLO datos iniciales mínimos, sin hardcodear categorías
             const initialDB = {
-                categorias: [
-                    { id: 'cat_1', nombre: 'Ropa', descripcion: 'Prendas de vestir', activa: true },
-                    { id: 'cat_2', nombre: 'Calzado', descripcion: 'Zapatos y zapatillas', activa: true },
-                    { id: 'cat_3', nombre: 'Accesorios', descripcion: 'Bolsos, carteras, joyas', activa: true },
-                    { id: 'cat_4', nombre: 'Electrónica', descripcion: 'Dispositivos electrónicos', activa: true },
-                    { id: 'cat_5', nombre: 'Hogar', descripcion: 'Artículos para el hogar', activa: true },
-                    { id: 'cat_6', nombre: 'Otros', descripcion: 'Productos varios', activa: true }
-                ],
-                vendedoras: [
-                    { id: 'v_1', nombre: 'María González', usuario: 'maria_g', password: '123456', status: 'activa', tienda: 'Tienda Centro' },
-                    { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
-                ],
-                productos: [
-                    { 
-                        id: 'p_1', 
-                        nombre: 'PRODUCTO DE PRUEBA', 
-                        categoria: 'cat_1', 
-                        precio: 99.99, 
-                        stock: 100, 
-                        minStock: 10, 
-                        status: 'activo' 
-                    }
-                ],
+                categorias: [],
+                vendedoras: [],
+                productos: [],
                 ventas: []
             };
             fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
@@ -47,30 +28,54 @@ function leerDB() {
         }
         
         const data = fs.readFileSync(DB_FILE, 'utf8');
-        console.log('📖 Base de datos leída correctamente');
-        return JSON.parse(data);
+        const db = JSON.parse(data);
+        
+        // Asegurar que todas las propiedades existen
+        if (!db.categorias) db.categorias = [];
+        if (!db.vendedoras) db.vendedoras = [];
+        if (!db.productos) db.productos = [];
+        if (!db.ventas) db.ventas = [];
+        
+        // Si no hay vendedoras, agregar las de prueba (solo primera vez)
+        if (db.vendedoras.length === 0) {
+            db.vendedoras = [
+                { id: 'v_1', nombre: 'María González', usuario: 'maria_g', password: '123456', status: 'activa', tienda: 'Tienda Centro' },
+                { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
+            ];
+            console.log('👩‍💼 Vendedoras de prueba agregadas');
+        }
+        
+        // Si no hay productos, agregar uno de prueba
+        if (db.productos.length === 0) {
+            db.productos = [
+                { 
+                    id: 'p_1', 
+                    nombre: 'PRODUCTO DE PRUEBA', 
+                    categoria: null, 
+                    precio: 99.99, 
+                    stock: 100, 
+                    minStock: 10, 
+                    status: 'activo' 
+                }
+            ];
+            console.log('📦 Producto de prueba agregado');
+        }
+        
+        // Guardar cambios si se agregaron datos de prueba
+        if (db.vendedoras.length > 0 || db.productos.length > 0) {
+            escribirDB(db, true); // true = no crear backup para no duplicar
+        }
+        
+        return db;
     } catch (error) {
         console.error('❌ Error leyendo database.json:', error);
-        // Si hay error, intentar leer backup
-        try {
-            const backupFile = DB_FILE.replace('.json', '_backup.json');
-            if (fs.existsSync(backupFile)) {
-                console.log('🔄 Restaurando desde backup...');
-                const backupData = fs.readFileSync(backupFile, 'utf8');
-                fs.writeFileSync(DB_FILE, backupData);
-                return JSON.parse(backupData);
-            }
-        } catch (backupError) {
-            console.error('❌ Error restaurando backup:', backupError);
-        }
         return { categorias: [], vendedoras: [], productos: [], ventas: [] };
     }
 }
 
-function escribirDB(data) {
+function escribirDB(data, skipBackup = false) {
     try {
-        // Hacer backup antes de escribir
-        if (fs.existsSync(DB_FILE)) {
+        if (!skipBackup && fs.existsSync(DB_FILE)) {
             const backupFile = DB_FILE.replace('.json', '_backup.json');
             fs.copyFileSync(DB_FILE, backupFile);
             console.log('💾 Backup creado');
@@ -223,14 +228,16 @@ app.post('/api/login', (req, res) => {
 app.get('/api/productos', (req, res) => {
     console.log('📥 GET /api/productos - Solicitado por vendedora');
     const db = leerDB();
+    
     // Enriquecer productos con nombre de categoría
     const productosConCategoria = db.productos.map(p => {
         const categoria = db.categorias.find(c => c.id === p.categoria);
         return {
             ...p,
-            categoria_nombre: categoria ? categoria.nombre : 'General'
+            categoria_nombre: categoria ? categoria.nombre : 'Sin categoría'
         };
     });
+    
     console.log(`📤 Enviando ${productosConCategoria.length} productos`);
     res.json(productosConCategoria);
 });
@@ -308,7 +315,7 @@ app.get('/api/dueno/productos', (req, res) => {
         const categoria = db.categorias.find(c => c.id === p.categoria);
         return {
             ...p,
-            categoria_nombre: categoria ? categoria.nombre : 'General'
+            categoria_nombre: categoria ? categoria.nombre : 'Sin categoría'
         };
     });
     res.json(productosConCategoria);
@@ -323,9 +330,14 @@ app.post('/api/dueno/productos', (req, res) => {
         return res.status(400).json({ error: 'Nombre, precio y stock son obligatorios' });
     }
     
-    // Verificar que la categoría existe
-    const categoriaValida = db.categorias.find(c => c.id === categoria);
-    const categoriaId = categoriaValida ? categoria : 'cat_6'; // Por defecto "Otros"
+    // Si no se especifica categoría o no existe, usar null
+    let categoriaId = null;
+    if (categoria) {
+        const categoriaValida = db.categorias.find(c => c.id === categoria);
+        if (categoriaValida) {
+            categoriaId = categoria;
+        }
+    }
     
     const nuevoProducto = {
         id: `p_${Date.now()}`,
@@ -340,7 +352,9 @@ app.post('/api/dueno/productos', (req, res) => {
     db.productos.push(nuevoProducto);
     escribirDB(db);
     
-    const categoriaNombre = db.categorias.find(c => c.id === categoriaId)?.nombre || 'General';
+    const categoriaNombre = categoriaId ? 
+        (db.categorias.find(c => c.id === categoriaId)?.nombre || 'Sin categoría') : 
+        'Sin categoría';
     
     console.log('✅ Producto creado:', nuevoProducto.nombre);
     res.json({
@@ -368,7 +382,7 @@ app.put('/api/dueno/productos/:id', (req, res) => {
         nombre: nombre || db.productos[index].nombre,
         precio: precio !== undefined ? parseFloat(precio) : db.productos[index].precio,
         stock: stock !== undefined ? parseInt(stock) : db.productos[index].stock,
-        categoria: categoria || db.productos[index].categoria,
+        categoria: categoria !== undefined ? categoria : db.productos[index].categoria,
         minStock: minStock !== undefined ? parseInt(minStock) : db.productos[index].minStock
     };
     
@@ -378,7 +392,9 @@ app.put('/api/dueno/productos/:id', (req, res) => {
     
     escribirDB(db);
     
-    const categoriaNombre = db.categorias.find(c => c.id === db.productos[index].categoria)?.nombre || 'General';
+    const categoriaNombre = db.productos[index].categoria ? 
+        (db.categorias.find(c => c.id === db.productos[index].categoria)?.nombre || 'Sin categoría') : 
+        'Sin categoría';
     
     console.log('✅ Producto actualizado:', db.productos[index].nombre);
     res.json({ 
@@ -414,22 +430,22 @@ app.listen(PORT, () => {
     console.log(`=============================================`);
     console.log(`🔗 URL: http://localhost:${PORT}`);
     console.log(`📁 Archivo: ${DB_FILE}`);
-    console.log(`\n📦 ENDPOINTS DE CATEGORÍAS (TODOS IMPLEMENTADOS):`);
-    console.log(`   1. GET    /api/categorias - Categorías activas (vendedoras)`);
-    console.log(`   2. GET    /api/dueno/categorias - Todas las categorías (dueño)`);
-    console.log(`   3. POST   /api/dueno/categorias - CREAR categoría`);
-    console.log(`   4. PUT    /api/dueno/categorias/:id - EDITAR categoría`);
-    console.log(`   5. DELETE /api/dueno/categorias/:id - ELIMINAR categoría`);
-    console.log(`\n📦 OTROS ENDPOINTS:`);
-    console.log(`   GET  / - Estado del servidor`);
-    console.log(`   POST /api/login - Login vendedoras`);
-    console.log(`   GET  /api/productos - Productos vendedoras`);
-    console.log(`   GET  /api/dueno/vendedoras - Lista vendedoras`);
-    console.log(`   POST /api/dueno/vendedoras - Crear vendedora`);
-    console.log(`   DELETE /api/dueno/vendedoras/:id - Eliminar vendedora`);
-    console.log(`   GET  /api/dueno/productos - Productos dueño`);
-    console.log(`   POST /api/dueno/productos - Crear producto`);
-    console.log(`   PUT  /api/dueno/productos/:id - Actualizar producto`);
+    console.log(`\n📦 ENDPOINTS DE CATEGORÍAS:`);
+    console.log(`   GET    /api/categorias - Categorías activas (vendedoras)`);
+    console.log(`   GET    /api/dueno/categorias - Todas las categorías (dueño)`);
+    console.log(`   POST   /api/dueno/categorias - CREAR categoría`);
+    console.log(`   PUT    /api/dueno/categorias/:id - EDITAR categoría`);
+    console.log(`   DELETE /api/dueno/categorias/:id - ELIMINAR categoría`);
+    console.log(`\n📦 ENDPOINTS DE PRODUCTOS:`);
+    console.log(`   GET    /api/productos - Productos (vendedoras)`);
+    console.log(`   GET    /api/dueno/productos - Productos (dueño)`);
+    console.log(`   POST   /api/dueno/productos - Crear producto`);
+    console.log(`   PUT    /api/dueno/productos/:id - Actualizar producto`);
     console.log(`   DELETE /api/dueno/productos/:id - Eliminar producto`);
+    console.log(`\n📦 ENDPOINTS DE VENDEDORAS:`);
+    console.log(`   POST   /api/login - Login`);
+    console.log(`   GET    /api/dueno/vendedoras - Lista vendedoras`);
+    console.log(`   POST   /api/dueno/vendedoras - Crear vendedora`);
+    console.log(`   DELETE /api/dueno/vendedoras/:id - Eliminar vendedora`);
     console.log(`=============================================\n`);
 });
