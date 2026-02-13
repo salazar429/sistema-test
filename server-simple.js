@@ -10,75 +10,140 @@ const DB_FILE = path.join(__dirname, 'database.json');
 app.use(cors());
 app.use(express.json());
 
-// ========== FUNCIONES JSON CON RESPALDO ==========
+// ========== FUNCIONES JSON CON RESPALDO Y RECUPERACIÓN ==========
 function leerDB() {
     try {
+        // Si el archivo NO existe, crearlo con datos iniciales COMPLETOS
         if (!fs.existsSync(DB_FILE)) {
-            console.log('📁 Creando nuevo archivo database.json...');
-            // SOLO datos iniciales mínimos, sin hardcodear categorías
+            console.log('📁 Creando nuevo archivo database.json con datos iniciales...');
             const initialDB = {
-                categorias: [],
-                vendedoras: [],
-                productos: [],
+                categorias: [
+                    { id: 'cat_1', nombre: 'Ropa', descripcion: 'Prendas de vestir', activa: true },
+                    { id: 'cat_2', nombre: 'Calzado', descripcion: 'Zapatos y zapatillas', activa: true },
+                    { id: 'cat_3', nombre: 'Accesorios', descripcion: 'Bolsos, carteras, joyas', activa: true },
+                    { id: 'cat_4', nombre: 'Electrónica', descripcion: 'Dispositivos electrónicos', activa: true },
+                    { id: 'cat_5', nombre: 'Hogar', descripcion: 'Artículos para el hogar', activa: true },
+                    { id: 'cat_6', nombre: 'Otros', descripcion: 'Productos varios', activa: true }
+                ],
+                vendedoras: [
+                    { id: 'v_1', nombre: 'María González', usuario: 'maria_g', password: '123456', status: 'activa', tienda: 'Tienda Centro' },
+                    { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
+                ],
+                productos: [
+                    { 
+                        id: 'p_1', 
+                        nombre: 'PRODUCTO DE PRUEBA', 
+                        categoria: 'cat_1', 
+                        precio: 99.99, 
+                        stock: 100, 
+                        minStock: 10, 
+                        status: 'activo' 
+                    }
+                ],
                 ventas: []
             };
             fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
-            console.log('✅ Archivo database.json creado');
+            console.log('✅ Archivo database.json creado con datos iniciales');
             return initialDB;
         }
         
+        // Si el archivo existe, leerlo
         const data = fs.readFileSync(DB_FILE, 'utf8');
-        const db = JSON.parse(data);
         
-        // Asegurar que todas las propiedades existen
-        if (!db.categorias) db.categorias = [];
-        if (!db.vendedoras) db.vendedoras = [];
-        if (!db.productos) db.productos = [];
-        if (!db.ventas) db.ventas = [];
-        
-        // Si no hay vendedoras, agregar las de prueba (solo primera vez)
-        if (db.vendedoras.length === 0) {
-            db.vendedoras = [
-                { id: 'v_1', nombre: 'María González', usuario: 'maria_g', password: '123456', status: 'activa', tienda: 'Tienda Centro' },
-                { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
-            ];
-            console.log('👩‍💼 Vendedoras de prueba agregadas');
+        // Verificar si el archivo está vacío o es inválido
+        if (!data || data.trim() === '') {
+            console.error('❌ Archivo database.json vacío, restaurando desde backup...');
+            return restaurarDesdeBackup();
         }
         
-        // Si no hay productos, agregar uno de prueba
-        if (db.productos.length === 0) {
-            db.productos = [
-                { 
-                    id: 'p_1', 
-                    nombre: 'PRODUCTO DE PRUEBA', 
-                    categoria: null, 
-                    precio: 99.99, 
-                    stock: 100, 
-                    minStock: 10, 
-                    status: 'activo' 
-                }
-            ];
-            console.log('📦 Producto de prueba agregado');
+        try {
+            const db = JSON.parse(data);
+            
+            // Verificar que el objeto tenga la estructura correcta
+            if (!db.categorias || !db.vendedoras || !db.productos || !db.ventas) {
+                console.error('❌ Estructura de database.json inválida, restaurando...');
+                return restaurarDesdeBackup();
+            }
+            
+            console.log('📖 Base de datos leída correctamente');
+            return db;
+            
+        } catch (parseError) {
+            console.error('❌ Error parseando database.json:', parseError);
+            return restaurarDesdeBackup();
         }
         
-        // Guardar cambios si se agregaron datos de prueba
-        if (db.vendedoras.length > 0 || db.productos.length > 0) {
-            escribirDB(db, true); // true = no crear backup para no duplicar
-        }
-        
-        return db;
     } catch (error) {
-        console.error('❌ Error leyendo database.json:', error);
-        return { categorias: [], vendedoras: [], productos: [], ventas: [] };
+        console.error('❌ Error crítico leyendo database.json:', error);
+        return restaurarDesdeBackup();
     }
 }
 
-function escribirDB(data, skipBackup = false) {
+function restaurarDesdeBackup() {
     try {
-        if (!skipBackup && fs.existsSync(DB_FILE)) {
+        const backupFile = DB_FILE.replace('.json', '_backup.json');
+        if (fs.existsSync(backupFile)) {
+            console.log('🔄 Restaurando desde backup...');
+            const backupData = fs.readFileSync(backupFile, 'utf8');
+            const backup = JSON.parse(backupData);
+            
+            // Verificar que el backup sea válido
+            if (backup.categorias && backup.vendedoras && backup.productos) {
+                fs.writeFileSync(DB_FILE, backupData);
+                console.log('✅ Backup restaurado correctamente');
+                return backup;
+            }
+        }
+    } catch (backupError) {
+        console.error('❌ Error restaurando backup:', backupError);
+    }
+    
+    // Si todo falla, crear desde cero
+    console.log('⚠️ Creando base de datos desde cero...');
+    const freshDB = {
+        categorias: [
+            { id: 'cat_1', nombre: 'Ropa', descripcion: 'Prendas de vestir', activa: true },
+            { id: 'cat_2', nombre: 'Calzado', descripcion: 'Zapatos y zapatillas', activa: true },
+            { id: 'cat_3', nombre: 'Accesorios', descripcion: 'Bolsos, carteras, joyas', activa: true },
+            { id: 'cat_4', nombre: 'Electrónica', descripcion: 'Dispositivos electrónicos', activa: true },
+            { id: 'cat_5', nombre: 'Hogar', descripcion: 'Artículos para el hogar', activa: true },
+            { id: 'cat_6', nombre: 'Otros', descripcion: 'Productos varios', activa: true }
+        ],
+        vendedoras: [
+            { id: 'v_1', nombre: 'María González', usuario: 'maria_g', password: '123456', status: 'activa', tienda: 'Tienda Centro' },
+            { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
+        ],
+        productos: [
+            { 
+                id: 'p_1', 
+                nombre: 'PRODUCTO DE PRUEBA', 
+                categoria: 'cat_1', 
+                precio: 99.99, 
+                stock: 100, 
+                minStock: 10, 
+                status: 'activo' 
+            }
+        ],
+        ventas: []
+    };
+    fs.writeFileSync(DB_FILE, JSON.stringify(freshDB, null, 2));
+    console.log('✅ Base de datos creada desde cero');
+    return freshDB;
+}
+
+function escribirDB(data) {
+    try {
+        // Siempre hacer backup ANTES de escribir
+        if (fs.existsSync(DB_FILE)) {
             const backupFile = DB_FILE.replace('.json', '_backup.json');
             fs.copyFileSync(DB_FILE, backupFile);
             console.log('💾 Backup creado');
+        }
+        
+        // Validar que los datos tengan la estructura correcta
+        if (!data.categorias || !data.vendedoras || !data.productos || !data.ventas) {
+            console.error('❌ Intento de guardar datos inválidos');
+            return false;
         }
         
         fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
@@ -426,26 +491,14 @@ app.delete('/api/dueno/productos/:id', (req, res) => {
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, () => {
     console.log(`\n🚀===========================================`);
-    console.log(`✅ SERVIDOR JSON CON PERSISTENCIA`);
+    console.log(`✅ SERVIDOR CON PERSISTENCIA REAL`);
     console.log(`=============================================`);
     console.log(`🔗 URL: http://localhost:${PORT}`);
     console.log(`📁 Archivo: ${DB_FILE}`);
-    console.log(`\n📦 ENDPOINTS DE CATEGORÍAS:`);
-    console.log(`   GET    /api/categorias - Categorías activas (vendedoras)`);
-    console.log(`   GET    /api/dueno/categorias - Todas las categorías (dueño)`);
-    console.log(`   POST   /api/dueno/categorias - CREAR categoría`);
-    console.log(`   PUT    /api/dueno/categorias/:id - EDITAR categoría`);
-    console.log(`   DELETE /api/dueno/categorias/:id - ELIMINAR categoría`);
-    console.log(`\n📦 ENDPOINTS DE PRODUCTOS:`);
-    console.log(`   GET    /api/productos - Productos (vendedoras)`);
-    console.log(`   GET    /api/dueno/productos - Productos (dueño)`);
-    console.log(`   POST   /api/dueno/productos - Crear producto`);
-    console.log(`   PUT    /api/dueno/productos/:id - Actualizar producto`);
-    console.log(`   DELETE /api/dueno/productos/:id - Eliminar producto`);
-    console.log(`\n📦 ENDPOINTS DE VENDEDORAS:`);
-    console.log(`   POST   /api/login - Login`);
-    console.log(`   GET    /api/dueno/vendedoras - Lista vendedoras`);
-    console.log(`   POST   /api/dueno/vendedoras - Crear vendedora`);
-    console.log(`   DELETE /api/dueno/vendedoras/:id - Eliminar vendedora`);
+    console.log(`💾 Backup automático: database_backup.json`);
+    console.log(`\n📦 DATOS INICIALES (solo si no existe archivo):`);
+    console.log(`   - 6 categorías predefinidas`);
+    console.log(`   - 2 vendedoras de prueba`);
+    console.log(`   - 1 producto de prueba`);
     console.log(`=============================================\n`);
 });
