@@ -37,9 +37,7 @@ function escribirDB(data) {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// ========== RUTAS ==========
-
-// RUTA RAÍZ
+// ========== RUTAS PÚBLICAS ==========
 app.get('/', (req, res) => {
     const db = leerDB();
     res.json({
@@ -50,7 +48,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// LOGIN VENDEDORA
+// ========== RUTAS PARA VENDEDORAS ==========
 app.post('/api/login', (req, res) => {
     const { usuario, password } = req.body;
     const db = leerDB();
@@ -74,15 +72,12 @@ app.post('/api/login', (req, res) => {
     }
 });
 
-// PRODUCTOS (vendedoras)
 app.get('/api/productos', (req, res) => {
     const db = leerDB();
     res.json(db.productos);
 });
 
-// ========== RUTAS DUEÑO ==========
-
-// OBTENER VENDEDORAS
+// ========== RUTAS PARA DUEÑO - VENDEDORAS ==========
 app.get('/api/dueno/vendedoras', (req, res) => {
     const db = leerDB();
     const vendedorasSinPass = db.vendedoras.map(v => ({
@@ -95,7 +90,6 @@ app.get('/api/dueno/vendedoras', (req, res) => {
     res.json(vendedorasSinPass);
 });
 
-// CREAR VENDEDORA
 app.post('/api/dueno/vendedoras', (req, res) => {
     const { nombre, usuario, password, tienda } = req.body;
     const db = leerDB();
@@ -129,7 +123,6 @@ app.post('/api/dueno/vendedoras', (req, res) => {
     });
 });
 
-// ELIMINAR VENDEDORA
 app.delete('/api/dueno/vendedoras/:id', (req, res) => {
     const { id } = req.params;
     const db = leerDB();
@@ -144,16 +137,56 @@ app.delete('/api/dueno/vendedoras/:id', (req, res) => {
     res.json({ success: true });
 });
 
-// PRODUCTOS (dueño)
+// ========== RUTAS PARA DUEÑO - PRODUCTOS ==========
+
+// 1. OBTENER TODOS LOS PRODUCTOS
 app.get('/api/dueno/productos', (req, res) => {
     const db = leerDB();
     res.json(db.productos);
 });
 
-// ACTUALIZAR PRODUCTO
+// 2. CREAR NUEVO PRODUCTO (⚠️ ESTA ES LA QUE FALTABA ⚠️)
+app.post('/api/dueno/productos', (req, res) => {
+    console.log('📦 Creando nuevo producto:', req.body);
+    
+    const { nombre, categoria, precio, stock, minStock } = req.body;
+    const db = leerDB();
+    
+    // Validaciones básicas
+    if (!nombre || !precio || stock === undefined) {
+        return res.status(400).json({ 
+            error: 'Nombre, precio y stock son obligatorios' 
+        });
+    }
+    
+    // Crear nuevo producto con ID único
+    const nuevoProducto = {
+        id: `p_${Date.now()}`,
+        nombre: nombre,
+        categoria: categoria || 'general',
+        precio: parseFloat(precio),
+        stock: parseInt(stock),
+        minStock: parseInt(minStock) || 5,
+        status: parseInt(stock) > (parseInt(minStock) || 5) ? 'activo' : 'bajo stock'
+    };
+    
+    db.productos.push(nuevoProducto);
+    escribirDB(db);
+    
+    console.log('✅ Producto creado:', nuevoProducto);
+    
+    res.json({
+        success: true,
+        producto: nuevoProducto
+    });
+});
+
+// 3. ACTUALIZAR PRODUCTO
 app.put('/api/dueno/productos/:id', (req, res) => {
+    console.log('✏️ Actualizando producto:', req.params.id, req.body);
+    
     const { id } = req.params;
-    const { nombre, precio, stock } = req.body;
+    const { nombre, precio, stock, categoria, minStock } = req.body;
     const db = leerDB();
     
     const index = db.productos.findIndex(p => p.id === id);
@@ -165,15 +198,50 @@ app.put('/api/dueno/productos/:id', (req, res) => {
         ...db.productos[index],
         nombre: nombre || db.productos[index].nombre,
         precio: precio !== undefined ? parseFloat(precio) : db.productos[index].precio,
-        stock: stock !== undefined ? parseInt(stock) : db.productos[index].stock
+        stock: stock !== undefined ? parseInt(stock) : db.productos[index].stock,
+        categoria: categoria || db.productos[index].categoria,
+        minStock: minStock !== undefined ? parseInt(minStock) : db.productos[index].minStock
     };
     
+    // Actualizar estado según stock
+    db.productos[index].status = db.productos[index].stock <= db.productos[index].minStock 
+        ? 'bajo stock' 
+        : 'activo';
+    
     escribirDB(db);
-    res.json({ success: true, producto: db.productos[index] });
+    console.log('✅ Producto actualizado:', db.productos[index]);
+    
+    res.json({ 
+        success: true, 
+        producto: db.productos[index] 
+    });
 });
 
-// INICIAR SERVIDOR
+// 4. ELIMINAR PRODUCTO (OPCIONAL - POR SI LO NECESITAS)
+app.delete('/api/dueno/productos/:id', (req, res) => {
+    console.log('🗑️ Eliminando producto:', req.params.id);
+    
+    const { id } = req.params;
+    const db = leerDB();
+    
+    const index = db.productos.findIndex(p => p.id === id);
+    if (index === -1) {
+        return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+    
+    db.productos.splice(index, 1);
+    escribirDB(db);
+    
+    res.json({ success: true });
+});
+
+// ========== INICIAR SERVIDOR ==========
 app.listen(PORT, () => {
     console.log(`✅ Servidor JSON persistente en puerto ${PORT}`);
     console.log(`📁 Archivo: database.json`);
+    console.log(`\n📦 ENDPOINTS DE PRODUCTOS:`);
+    console.log(`   GET    /api/dueno/productos - Listar productos`);
+    console.log(`   POST   /api/dueno/productos - Crear producto (⚠️ NUEVO)`);
+    console.log(`   PUT    /api/dueno/productos/:id - Actualizar producto`);
+    console.log(`   DELETE /api/dueno/productos/:id - Eliminar producto`);
 });
