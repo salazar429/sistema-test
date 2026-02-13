@@ -99,7 +99,8 @@ app.get('/', (req, res) => {
 });
 
 // ========== RUTAS PARA CATEGORÍAS ==========
-// IMPORTANTE: Esta ruta es para vendedoras - SOLO CATEGORÍAS ACTIVAS
+
+// 1. GET /api/categorias - Para vendedoras (solo activas)
 app.get('/api/categorias', (req, res) => {
     console.log('📥 GET /api/categorias - Solicitado por vendedora');
     const db = leerDB();
@@ -108,7 +109,7 @@ app.get('/api/categorias', (req, res) => {
     res.json(categoriasActivas);
 });
 
-// Ruta para dueño - TODAS las categorías (incluyendo inactivas)
+// 2. GET /api/dueno/categorias - Para dueño (todas)
 app.get('/api/dueno/categorias', (req, res) => {
     console.log('📥 GET /api/dueno/categorias - Solicitado por dueño');
     const db = leerDB();
@@ -116,6 +117,7 @@ app.get('/api/dueno/categorias', (req, res) => {
     res.json(db.categorias);
 });
 
+// 3. POST /api/dueno/categorias - CREAR categoría
 app.post('/api/dueno/categorias', (req, res) => {
     console.log('📥 POST /api/dueno/categorias - Crear categoría:', req.body);
     const { nombre, descripcion } = req.body;
@@ -139,6 +141,7 @@ app.post('/api/dueno/categorias', (req, res) => {
     res.json({ success: true, categoria: nuevaCategoria });
 });
 
+// 4. PUT /api/dueno/categorias/:id - EDITAR categoría
 app.put('/api/dueno/categorias/:id', (req, res) => {
     console.log('📥 PUT /api/dueno/categorias/:id - Actualizar:', req.params.id, req.body);
     const { id } = req.params;
@@ -162,6 +165,7 @@ app.put('/api/dueno/categorias/:id', (req, res) => {
     res.json({ success: true, categoria: db.categorias[index] });
 });
 
+// 5. DELETE /api/dueno/categorias/:id - ELIMINAR categoría
 app.delete('/api/dueno/categorias/:id', (req, res) => {
     console.log('📥 DELETE /api/dueno/categorias/:id - Eliminar:', req.params.id);
     const { id } = req.params;
@@ -410,13 +414,14 @@ app.listen(PORT, () => {
     console.log(`=============================================`);
     console.log(`🔗 URL: http://localhost:${PORT}`);
     console.log(`📁 Archivo: ${DB_FILE}`);
-    console.log(`\n📦 ENDPOINTS:`);
+    console.log(`\n📦 ENDPOINTS DE CATEGORÍAS (TODOS IMPLEMENTADOS):`);
+    console.log(`   1. GET    /api/categorias - Categorías activas (vendedoras)`);
+    console.log(`   2. GET    /api/dueno/categorias - Todas las categorías (dueño)`);
+    console.log(`   3. POST   /api/dueno/categorias - CREAR categoría`);
+    console.log(`   4. PUT    /api/dueno/categorias/:id - EDITAR categoría`);
+    console.log(`   5. DELETE /api/dueno/categorias/:id - ELIMINAR categoría`);
+    console.log(`\n📦 OTROS ENDPOINTS:`);
     console.log(`   GET  / - Estado del servidor`);
-    console.log(`   GET  /api/categorias - Categorías activas (vendedoras)`);
-    console.log(`   GET  /api/dueno/categorias - Todas las categorías (dueño)`);
-    console.log(`   POST /api/dueno/categorias - Crear categoría`);
-    console.log(`   PUT  /api/dueno/categorias/:id - Editar categoría`);
-    console.log(`   DELETE /api/dueno/categorias/:id - Eliminar categoría`);
     console.log(`   POST /api/login - Login vendedoras`);
     console.log(`   GET  /api/productos - Productos vendedoras`);
     console.log(`   GET  /api/dueno/vendedoras - Lista vendedoras`);
