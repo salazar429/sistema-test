@@ -10,11 +10,11 @@ const DB_FILE = path.join(__dirname, 'database.json');
 app.use(cors());
 app.use(express.json());
 
-// ========== FUNCIONES JSON CON RESPALDO ==========
+// ========== FUNCIONES JSON CON RESPALDO Y LOGS ==========
 function leerDB() {
     try {
         if (!fs.existsSync(DB_FILE)) {
-            // Datos iniciales completos
+            console.log('📁 Creando nuevo archivo database.json con datos iniciales...');
             const initialDB = {
                 categorias: [
                     { id: 'cat_1', nombre: 'Ropa', descripcion: 'Prendas de vestir', activa: true },
@@ -33,7 +33,6 @@ function leerDB() {
                         id: 'p_1', 
                         nombre: 'PRODUCTO DE PRUEBA', 
                         categoria: 'cat_1', 
-                        categoria_nombre: 'Ropa',
                         precio: 99.99, 
                         stock: 100, 
                         minStock: 10, 
@@ -43,28 +42,42 @@ function leerDB() {
                 ventas: []
             };
             fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
-            console.log('✅ Archivo database.json creado con datos iniciales');
+            console.log('✅ Archivo database.json creado');
             return initialDB;
         }
         
         const data = fs.readFileSync(DB_FILE, 'utf8');
+        console.log('📖 Base de datos leída correctamente');
         return JSON.parse(data);
     } catch (error) {
         console.error('❌ Error leyendo database.json:', error);
+        // Si hay error, intentar leer backup
+        try {
+            const backupFile = DB_FILE.replace('.json', '_backup.json');
+            if (fs.existsSync(backupFile)) {
+                console.log('🔄 Restaurando desde backup...');
+                const backupData = fs.readFileSync(backupFile, 'utf8');
+                fs.writeFileSync(DB_FILE, backupData);
+                return JSON.parse(backupData);
+            }
+        } catch (backupError) {
+            console.error('❌ Error restaurando backup:', backupError);
+        }
         return { categorias: [], vendedoras: [], productos: [], ventas: [] };
     }
 }
 
 function escribirDB(data) {
     try {
-        // Hacer backup automático antes de escribir
+        // Hacer backup antes de escribir
         if (fs.existsSync(DB_FILE)) {
             const backupFile = DB_FILE.replace('.json', '_backup.json');
             fs.copyFileSync(DB_FILE, backupFile);
+            console.log('💾 Backup creado');
         }
         
         fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-        console.log('💾 Cambios guardados en database.json');
+        console.log('✅ Cambios guardados en database.json');
         return true;
     } catch (error) {
         console.error('❌ Error guardando database.json:', error);
@@ -80,22 +93,31 @@ app.get('/', (req, res) => {
         timestamp: new Date().toISOString(),
         categorias: db.categorias.length,
         vendedoras: db.vendedoras.length,
-        productos: db.productos.length
+        productos: db.productos.length,
+        archivo: 'database.json'
     });
 });
 
 // ========== RUTAS PARA CATEGORÍAS ==========
+// IMPORTANTE: Esta ruta es para vendedoras - SOLO CATEGORÍAS ACTIVAS
 app.get('/api/categorias', (req, res) => {
+    console.log('📥 GET /api/categorias - Solicitado por vendedora');
     const db = leerDB();
-    res.json(db.categorias.filter(c => c.activa !== false));
+    const categoriasActivas = db.categorias.filter(c => c.activa !== false);
+    console.log(`📤 Enviando ${categoriasActivas.length} categorías activas`);
+    res.json(categoriasActivas);
 });
 
+// Ruta para dueño - TODAS las categorías (incluyendo inactivas)
 app.get('/api/dueno/categorias', (req, res) => {
+    console.log('📥 GET /api/dueno/categorias - Solicitado por dueño');
     const db = leerDB();
+    console.log(`📤 Enviando ${db.categorias.length} categorías`);
     res.json(db.categorias);
 });
 
 app.post('/api/dueno/categorias', (req, res) => {
+    console.log('📥 POST /api/dueno/categorias - Crear categoría:', req.body);
     const { nombre, descripcion } = req.body;
     const db = leerDB();
     
@@ -113,10 +135,12 @@ app.post('/api/dueno/categorias', (req, res) => {
     db.categorias.push(nuevaCategoria);
     escribirDB(db);
     
+    console.log('✅ Categoría creada:', nuevaCategoria);
     res.json({ success: true, categoria: nuevaCategoria });
 });
 
 app.put('/api/dueno/categorias/:id', (req, res) => {
+    console.log('📥 PUT /api/dueno/categorias/:id - Actualizar:', req.params.id, req.body);
     const { id } = req.params;
     const { nombre, descripcion, activa } = req.body;
     const db = leerDB();
@@ -134,16 +158,19 @@ app.put('/api/dueno/categorias/:id', (req, res) => {
     };
     
     escribirDB(db);
+    console.log('✅ Categoría actualizada:', db.categorias[index]);
     res.json({ success: true, categoria: db.categorias[index] });
 });
 
 app.delete('/api/dueno/categorias/:id', (req, res) => {
+    console.log('📥 DELETE /api/dueno/categorias/:id - Eliminar:', req.params.id);
     const { id } = req.params;
     const db = leerDB();
     
     // Verificar si hay productos usando esta categoría
     const productosUsando = db.productos.filter(p => p.categoria === id);
     if (productosUsando.length > 0) {
+        console.log('❌ No se puede eliminar: productos usándola:', productosUsando.map(p => p.nombre));
         return res.status(400).json({ 
             error: 'No se puede eliminar: hay productos usando esta categoría',
             productos: productosUsando.map(p => p.nombre)
@@ -158,11 +185,13 @@ app.delete('/api/dueno/categorias/:id', (req, res) => {
     db.categorias.splice(index, 1);
     escribirDB(db);
     
+    console.log('✅ Categoría eliminada');
     res.json({ success: true });
 });
 
 // ========== RUTAS PARA VENDEDORAS ==========
 app.post('/api/login', (req, res) => {
+    console.log('📥 POST /api/login - Intento de login:', req.body.usuario);
     const { usuario, password } = req.body;
     const db = leerDB();
     
@@ -171,6 +200,7 @@ app.post('/api/login', (req, res) => {
     );
     
     if (vendedora) {
+        console.log('✅ Login exitoso:', vendedora.nombre);
         res.json({
             success: true,
             usuario: {
@@ -181,11 +211,13 @@ app.post('/api/login', (req, res) => {
             }
         });
     } else {
+        console.log('❌ Login fallido:', usuario);
         res.status(401).json({ success: false, error: 'Credenciales incorrectas' });
     }
 });
 
 app.get('/api/productos', (req, res) => {
+    console.log('📥 GET /api/productos - Solicitado por vendedora');
     const db = leerDB();
     // Enriquecer productos con nombre de categoría
     const productosConCategoria = db.productos.map(p => {
@@ -195,11 +227,13 @@ app.get('/api/productos', (req, res) => {
             categoria_nombre: categoria ? categoria.nombre : 'General'
         };
     });
+    console.log(`📤 Enviando ${productosConCategoria.length} productos`);
     res.json(productosConCategoria);
 });
 
 // ========== RUTAS PARA DUEÑO - VENDEDORAS ==========
 app.get('/api/dueno/vendedoras', (req, res) => {
+    console.log('📥 GET /api/dueno/vendedoras');
     const db = leerDB();
     const vendedorasSinPass = db.vendedoras.map(v => ({
         id: v.id,
@@ -212,6 +246,7 @@ app.get('/api/dueno/vendedoras', (req, res) => {
 });
 
 app.post('/api/dueno/vendedoras', (req, res) => {
+    console.log('📥 POST /api/dueno/vendedoras - Crear:', req.body);
     const { nombre, usuario, password, tienda } = req.body;
     const db = leerDB();
     
@@ -232,6 +267,7 @@ app.post('/api/dueno/vendedoras', (req, res) => {
     db.vendedoras.push(nuevaVendedora);
     escribirDB(db);
     
+    console.log('✅ Vendedora creada:', nuevaVendedora.nombre);
     res.json({
         success: true,
         vendedora: {
@@ -245,6 +281,7 @@ app.post('/api/dueno/vendedoras', (req, res) => {
 });
 
 app.delete('/api/dueno/vendedoras/:id', (req, res) => {
+    console.log('📥 DELETE /api/dueno/vendedoras/:id - Eliminar:', req.params.id);
     const { id } = req.params;
     const db = leerDB();
     
@@ -255,13 +292,14 @@ app.delete('/api/dueno/vendedoras/:id', (req, res) => {
     
     db.vendedoras.splice(index, 1);
     escribirDB(db);
+    console.log('✅ Vendedora eliminada');
     res.json({ success: true });
 });
 
 // ========== RUTAS PARA DUEÑO - PRODUCTOS ==========
 app.get('/api/dueno/productos', (req, res) => {
+    console.log('📥 GET /api/dueno/productos');
     const db = leerDB();
-    // Enriquecer productos con nombre de categoría
     const productosConCategoria = db.productos.map(p => {
         const categoria = db.categorias.find(c => c.id === p.categoria);
         return {
@@ -273,6 +311,7 @@ app.get('/api/dueno/productos', (req, res) => {
 });
 
 app.post('/api/dueno/productos', (req, res) => {
+    console.log('📥 POST /api/dueno/productos - Crear:', req.body);
     const { nombre, categoria, precio, stock, minStock } = req.body;
     const db = leerDB();
     
@@ -297,9 +336,9 @@ app.post('/api/dueno/productos', (req, res) => {
     db.productos.push(nuevoProducto);
     escribirDB(db);
     
-    // Devolver con nombre de categoría
     const categoriaNombre = db.categorias.find(c => c.id === categoriaId)?.nombre || 'General';
     
+    console.log('✅ Producto creado:', nuevoProducto.nombre);
     res.json({
         success: true,
         producto: {
@@ -310,6 +349,7 @@ app.post('/api/dueno/productos', (req, res) => {
 });
 
 app.put('/api/dueno/productos/:id', (req, res) => {
+    console.log('📥 PUT /api/dueno/productos/:id - Actualizar:', req.params.id, req.body);
     const { id } = req.params;
     const { nombre, precio, stock, categoria, minStock } = req.body;
     const db = leerDB();
@@ -334,9 +374,9 @@ app.put('/api/dueno/productos/:id', (req, res) => {
     
     escribirDB(db);
     
-    // Devolver con nombre de categoría
     const categoriaNombre = db.categorias.find(c => c.id === db.productos[index].categoria)?.nombre || 'General';
     
+    console.log('✅ Producto actualizado:', db.productos[index].nombre);
     res.json({ 
         success: true, 
         producto: {
@@ -347,6 +387,7 @@ app.put('/api/dueno/productos/:id', (req, res) => {
 });
 
 app.delete('/api/dueno/productos/:id', (req, res) => {
+    console.log('📥 DELETE /api/dueno/productos/:id - Eliminar:', req.params.id);
     const { id } = req.params;
     const db = leerDB();
     
@@ -358,21 +399,32 @@ app.delete('/api/dueno/productos/:id', (req, res) => {
     db.productos.splice(index, 1);
     escribirDB(db);
     
+    console.log('✅ Producto eliminado');
     res.json({ success: true });
 });
 
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, () => {
     console.log(`\n🚀===========================================`);
-    console.log(`✅ SERVIDOR JSON CON CATEGORÍAS`);
+    console.log(`✅ SERVIDOR JSON CON PERSISTENCIA`);
     console.log(`=============================================`);
     console.log(`🔗 URL: http://localhost:${PORT}`);
-    console.log(`📁 Archivo: database.json (con respaldo automático)`);
-    console.log(`\n📦 ENDPOINTS NUEVOS:`);
-    console.log(`   GET    /api/categorias - Categorías activas`);
-    console.log(`   GET    /api/dueno/categorias - Todas las categorías`);
-    console.log(`   POST   /api/dueno/categorias - Crear categoría`);
-    console.log(`   PUT    /api/dueno/categorias/:id - Editar categoría`);
+    console.log(`📁 Archivo: ${DB_FILE}`);
+    console.log(`\n📦 ENDPOINTS:`);
+    console.log(`   GET  / - Estado del servidor`);
+    console.log(`   GET  /api/categorias - Categorías activas (vendedoras)`);
+    console.log(`   GET  /api/dueno/categorias - Todas las categorías (dueño)`);
+    console.log(`   POST /api/dueno/categorias - Crear categoría`);
+    console.log(`   PUT  /api/dueno/categorias/:id - Editar categoría`);
     console.log(`   DELETE /api/dueno/categorias/:id - Eliminar categoría`);
+    console.log(`   POST /api/login - Login vendedoras`);
+    console.log(`   GET  /api/productos - Productos vendedoras`);
+    console.log(`   GET  /api/dueno/vendedoras - Lista vendedoras`);
+    console.log(`   POST /api/dueno/vendedoras - Crear vendedora`);
+    console.log(`   DELETE /api/dueno/vendedoras/:id - Eliminar vendedora`);
+    console.log(`   GET  /api/dueno/productos - Productos dueño`);
+    console.log(`   POST /api/dueno/productos - Crear producto`);
+    console.log(`   PUT  /api/dueno/productos/:id - Actualizar producto`);
+    console.log(`   DELETE /api/dueno/productos/:id - Eliminar producto`);
     console.log(`=============================================\n`);
 });
