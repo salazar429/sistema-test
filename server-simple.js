@@ -13,17 +13,23 @@ const GITHUB_PATH = process.env.GITHUB_PATH || 'database.json';
 // ========== CACHE EN MEMORIA ==========
 let cacheDB = null;
 let ultimaSincronizacion = 0;
-const CACHE_DURACION = 30000; // 30 segundos (puedes ajustar)
+const CACHE_DURACION = 30000; // 30 segundos
 
 app.use(cors());
 app.use(express.json());
 
-// ========== FUNCIONES PARA GITHUB CON CACHE Y CONTROL DE CONFLICTOS ==========
-async function leerDB(ignorarCache = false) {
+// ========== FUNCIÓN LEER DB CON CONTROL DE CACHE ==========
+async function leerDB(forzarLectura = false) {
     const ahora = Date.now();
     
-    // Si hay cache y no ha expirado, devolverlo
-    if (!ignorarCache && cacheDB && (ahora - ultimaSincronizacion) < CACHE_DURACION) {
+    // Si se fuerza lectura, ignorar cache
+    if (forzarLectura) {
+        console.log('🔄 Forzando lectura de GitHub (ignorando cache)');
+        ultimaSincronizacion = 0; // Resetear timestamp
+    }
+    
+    // Si hay cache y no ha expirado Y no se fuerza lectura, devolverlo
+    if (!forzarLectura && cacheDB && (ahora - ultimaSincronizacion) < CACHE_DURACION) {
         console.log('📦 Usando datos en caché');
         return cacheDB;
     }
@@ -41,21 +47,9 @@ async function leerDB(ignorarCache = false) {
         if (response.status === 404) {
             console.log('📁 Archivo no encontrado en GitHub, creando uno nuevo...');
             const initialDB = {
-                categorias: [
-                    { id: 'cat_1', nombre: 'Ropa', descripcion: 'Prendas de vestir', activa: true },
-                    { id: 'cat_2', nombre: 'Calzado', descripcion: 'Zapatos y zapatillas', activa: true },
-                    { id: 'cat_3', nombre: 'Accesorios', descripcion: 'Bolsos, carteras, joyas', activa: true },
-                    { id: 'cat_4', nombre: 'Electrónica', descripcion: 'Dispositivos electrónicos', activa: true },
-                    { id: 'cat_5', nombre: 'Hogar', descripcion: 'Artículos para el hogar', activa: true },
-                    { id: 'cat_6', nombre: 'Otros', descripcion: 'Productos varios', activa: true }
-                ],
-                vendedoras: [
-                    { id: 'v_1', nombre: 'María González', usuario: 'maria_g', password: '123456', status: 'activa', tienda: 'Tienda Centro' },
-                    { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
-                ],
-                productos: [
-                    { id: 'p_1', nombre: 'PRODUCTO DE PRUEBA', categoria: 'cat_1', precio: 99.99, stock: 100, minStock: 10, status: 'activo' }
-                ],
+                categorias: [],
+                vendedoras: [],
+                productos: [],
                 ventas: []
             };
             await escribirDB(initialDB);
@@ -81,7 +75,6 @@ async function leerDB(ignorarCache = false) {
     } catch (error) {
         console.error('❌ Error leyendo de GitHub:', error);
         
-        // Si hay cache aunque sea viejo, devolverlo como fallback
         if (cacheDB) {
             console.log('⚠️ Usando caché como fallback por error');
             return cacheDB;
@@ -91,9 +84,9 @@ async function leerDB(ignorarCache = false) {
     }
 }
 
+// ========== FUNCIÓN ESCRIBIR DB CON INVALIDACIÓN DE CACHE ==========
 async function escribirDB(db, reintentos = 3) {
     try {
-        // Primero obtenemos el archivo actual para conocer su SHA
         const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/${GITHUB_PATH}`;
         const getResponse = await fetch(url, {
             headers: {
@@ -103,38 +96,11 @@ async function escribirDB(db, reintentos = 3) {
         });
 
         let sha = null;
-        let versionRemota = null;
-        
         if (getResponse.status === 200) {
             const existing = await getResponse.json();
             sha = existing.sha;
-            // Guardar versión remota para comparar
-            const contentRemoto = Buffer.from(existing.content, 'base64').toString('utf8');
-            versionRemota = JSON.parse(contentRemoto);
         }
 
-        // Verificar conflictos: comparar si alguien más modificó mientras tanto
-        if (versionRemota && cacheDB) {
-            // Comparar timestamps o contenido (implementación simple)
-            const cambiosRemotos = JSON.stringify(versionRemota) !== JSON.stringify(cacheDB);
-            
-            if (cambiosRemotos && reintentos < 3) {
-                console.log('⚠️ Conflicto detectado. Intentando resolver...');
-                
-                // Estrategia: fusionar cambios (en este caso, preferir los locales)
-                // Pero para evitar pérdida, podrías implementar una fusión más sofisticada
-                const dbFusionada = fusionarDBs(versionRemota, db);
-                
-                // Actualizar cache con la versión fusionada
-                cacheDB = dbFusionada;
-                ultimaSincronizacion = Date.now();
-                
-                // Reintentar con la versión fusionada
-                return escribirDB(dbFusionada, reintentos - 1);
-            }
-        }
-
-        // Codificar el contenido a base64
         const content = Buffer.from(JSON.stringify(db, null, 2)).toString('base64');
 
         const body = {
@@ -156,11 +122,9 @@ async function escribirDB(db, reintentos = 3) {
         if (!putResponse.ok) {
             const errorData = await putResponse.json();
             
-            // Si el error es por SHA desactualizado (conflicto), reintentar
             if (errorData.message && errorData.message.includes('sha') && reintentos > 0) {
                 console.log('🔄 SHA desactualizado, reintentando...');
-                // Forzar recarga de GitHub
-                await leerDB(true); // Ignorar cache
+                await leerDB(true);
                 return escribirDB(db, reintentos - 1);
             }
             
@@ -168,11 +132,11 @@ async function escribirDB(db, reintentos = 3) {
             return false;
         }
 
-        // Actualizar cache después de escribir exitosamente
+        // ¡CAMBIO CLAVE! Forzar que la próxima lectura vaya a GitHub
         cacheDB = db;
-        ultimaSincronizacion = Date.now();
+        ultimaSincronizacion = 0; // Resetear timestamp para invalidar cache
         
-        console.log('✅ Datos guardados en GitHub');
+        console.log('✅ Datos guardados en GitHub. Cache invalidado.');
         return true;
         
     } catch (error) {
@@ -180,7 +144,7 @@ async function escribirDB(db, reintentos = 3) {
         
         if (reintentos > 0) {
             console.log(`🔄 Reintentando (${reintentos} intentos restantes)...`);
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Esperar 1 segundo
+            await new Promise(resolve => setTimeout(resolve, 1000));
             return escribirDB(db, reintentos - 1);
         }
         
@@ -188,48 +152,9 @@ async function escribirDB(db, reintentos = 3) {
     }
 }
 
-// Función para fusionar dos versiones de la base de datos
-function fusionarDBs(remota, local) {
-    console.log('🔄 Fusionando cambios remotos y locales...');
-    
-    // Crear una copia profunda de la versión remota como base
-    const fusionada = JSON.parse(JSON.stringify(remota));
-    
-    // Fusionar categorías (mantener ambas, evitar duplicados por ID)
-    const categoriasMap = new Map();
-    [...remota.categorias, ...local.categorias].forEach(c => {
-        categoriasMap.set(c.id, c);
-    });
-    fusionada.categorias = Array.from(categoriasMap.values());
-    
-    // Fusionar vendedoras
-    const vendedorasMap = new Map();
-    [...remota.vendedoras, ...local.vendedoras].forEach(v => {
-        vendedorasMap.set(v.id, v);
-    });
-    fusionada.vendedoras = Array.from(vendedorasMap.values());
-    
-    // Fusionar productos
-    const productosMap = new Map();
-    [...remota.productos, ...local.productos].forEach(p => {
-        productosMap.set(p.id, p);
-    });
-    fusionada.productos = Array.from(productosMap.values());
-    
-    // Fusionar ventas
-    const ventasMap = new Map();
-    [...remota.ventas, ...local.ventas].forEach(v => {
-        ventasMap.set(v.id, v);
-    });
-    fusionada.ventas = Array.from(ventasMap.values());
-    
-    console.log('✅ Fusión completada');
-    return fusionada;
-}
-
 // Endpoint para forzar recarga del cache (útil para depuración)
 app.post('/api/recargar-cache', async (req, res) => {
-    await leerDB(true); // Forzar recarga
+    await leerDB(true);
     res.json({ success: true, mensaje: 'Cache recargado' });
 });
 
@@ -237,14 +162,13 @@ app.post('/api/recargar-cache', async (req, res) => {
 app.get('/', async (req, res) => {
     const db = await leerDB();
     res.json({
-        mensaje: '✅ SERVIDOR CON GITHUB COMO BD + CACHE',
+        mensaje: '✅ SERVIDOR CON GITHUB + CACHE INTELIGENTE',
         timestamp: new Date().toISOString(),
         categorias: db.categorias.length,
         vendedoras: db.vendedoras.length,
         productos: db.productos.length,
         repo: GITHUB_REPO,
-        cache_activo: cacheDB ? true : false,
-        ultima_sincronizacion: new Date(ultimaSincronizacion).toLocaleString()
+        cache_activo: cacheDB ? true : false
     });
 });
 
@@ -262,7 +186,7 @@ app.get('/api/dueno/categorias', async (req, res) => {
 
 app.post('/api/dueno/categorias', async (req, res) => {
     const { nombre, descripcion } = req.body;
-    const db = await leerDB(true); // Forzar lectura fresca para evitar conflictos
+    const db = await leerDB(true);
     
     if (!nombre) {
         return res.status(400).json({ error: 'El nombre es obligatorio' });
@@ -279,6 +203,7 @@ app.post('/api/dueno/categorias', async (req, res) => {
     const exito = await escribirDB(db);
     
     if (exito) {
+        await leerDB(true); // Forzar recarga del cache
         res.json({ success: true, categoria: nuevaCategoria });
     } else {
         res.status(500).json({ error: 'No se pudo guardar en GitHub' });
@@ -303,7 +228,9 @@ app.put('/api/dueno/categorias/:id', async (req, res) => {
     };
     
     const exito = await escribirDB(db);
+    
     if (exito) {
+        await leerDB(true);
         res.json({ success: true, categoria: db.categorias[index] });
     } else {
         res.status(500).json({ error: 'No se pudo guardar en GitHub' });
@@ -331,6 +258,7 @@ app.delete('/api/dueno/categorias/:id', async (req, res) => {
     const exito = await escribirDB(db);
     
     if (exito) {
+        await leerDB(true);
         res.json({ success: true });
     } else {
         res.status(500).json({ error: 'No se pudo guardar en GitHub' });
@@ -405,6 +333,7 @@ app.post('/api/dueno/vendedoras', async (req, res) => {
     const exito = await escribirDB(db);
     
     if (exito) {
+        await leerDB(true);
         res.json({
             success: true,
             vendedora: {
@@ -433,6 +362,7 @@ app.delete('/api/dueno/vendedoras/:id', async (req, res) => {
     const exito = await escribirDB(db);
     
     if (exito) {
+        await leerDB(true);
         res.json({ success: true });
     } else {
         res.status(500).json({ error: 'No se pudo guardar en GitHub' });
@@ -477,6 +407,7 @@ app.post('/api/dueno/productos', async (req, res) => {
     const exito = await escribirDB(db);
     
     if (exito) {
+        await leerDB(true);
         const categoriaNombre = categoriaId ? (db.categorias.find(c => c.id === categoriaId)?.nombre || 'Sin categoría') : 'Sin categoría';
         res.json({ success: true, producto: { ...nuevoProducto, categoria_nombre: categoriaNombre } });
     } else {
@@ -508,6 +439,7 @@ app.put('/api/dueno/productos/:id', async (req, res) => {
     const exito = await escribirDB(db);
     
     if (exito) {
+        await leerDB(true);
         const categoriaNombre = db.productos[index].categoria ? (db.categorias.find(c => c.id === db.productos[index].categoria)?.nombre || 'Sin categoría') : 'Sin categoría';
         res.json({ success: true, producto: { ...db.productos[index], categoria_nombre: categoriaNombre } });
     } else {
@@ -528,6 +460,7 @@ app.delete('/api/dueno/productos/:id', async (req, res) => {
     const exito = await escribirDB(db);
     
     if (exito) {
+        await leerDB(true);
         res.json({ success: true });
     } else {
         res.status(500).json({ error: 'No se pudo guardar en GitHub' });
@@ -537,11 +470,10 @@ app.delete('/api/dueno/productos/:id', async (req, res) => {
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, () => {
     console.log(`\n🚀===========================================`);
-    console.log(`✅ SERVIDOR CON GITHUB + CACHE + CONTROL DE CONFLICTOS`);
+    console.log(`✅ SERVIDOR CON GITHUB + CACHE INTELIGENTE`);
     console.log(`=============================================`);
     console.log(`🔗 URL: http://localhost:${PORT}`);
     console.log(`📁 Repositorio: ${GITHUB_REPO}`);
-    console.log(`🔑 Token configurado: ${GITHUB_TOKEN ? 'Sí' : 'No'}`);
-    console.log(`⏱️  Cache activo: ${CACHE_DURACION / 1000} segundos`);
+    console.log(`⏱️  Cache: ${CACHE_DURACION / 1000} segundos`);
     console.log(`=============================================\n`);
 });
