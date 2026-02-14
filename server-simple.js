@@ -1,21 +1,32 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
+const fetch = require('node-fetch'); // Necesitarás instalarlo: npm install node-fetch
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DB_FILE = path.join(__dirname, 'database.json');
+
+// Variables de entorno
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_REPO = process.env.GITHUB_REPO; // formato "usuario/repo"
+const GITHUB_PATH = process.env.GITHUB_PATH || 'database.json';
 
 app.use(cors());
 app.use(express.json());
 
-// ========== FUNCIONES JSON CON RESPALDO Y RECUPERACIÓN ==========
-function leerDB() {
+// ========== FUNCIONES PARA LEER/ESCRIBIR EN GITHUB ==========
+async function leerDB() {
     try {
-        // Si el archivo NO existe, crearlo con datos iniciales COMPLETOS
-        if (!fs.existsSync(DB_FILE)) {
-            console.log('📁 Creando nuevo archivo database.json con datos iniciales...');
+        const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/${GITHUB_PATH}`;
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+
+        if (response.status === 404) {
+            console.log('📁 Archivo no encontrado en GitHub, creando uno nuevo...');
+            // Datos iniciales (los mismos que antes)
             const initialDB = {
                 categorias: [
                     { id: 'cat_1', nombre: 'Ropa', descripcion: 'Prendas de vestir', activa: true },
@@ -30,168 +41,107 @@ function leerDB() {
                     { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
                 ],
                 productos: [
-                    { 
-                        id: 'p_1', 
-                        nombre: 'PRODUCTO DE PRUEBA', 
-                        categoria: 'cat_1', 
-                        precio: 99.99, 
-                        stock: 100, 
-                        minStock: 10, 
-                        status: 'activo' 
-                    }
+                    { id: 'p_1', nombre: 'PRODUCTO DE PRUEBA', categoria: 'cat_1', precio: 99.99, stock: 100, minStock: 10, status: 'activo' }
                 ],
                 ventas: []
             };
-            fs.writeFileSync(DB_FILE, JSON.stringify(initialDB, null, 2));
-            console.log('✅ Archivo database.json creado con datos iniciales');
+            await escribirDB(initialDB);
             return initialDB;
         }
-        
-        // Si el archivo existe, leerlo
-        const data = fs.readFileSync(DB_FILE, 'utf8');
-        
-        // Verificar si el archivo está vacío o es inválido
-        if (!data || data.trim() === '') {
-            console.error('❌ Archivo database.json vacío, restaurando desde backup...');
-            return restaurarDesdeBackup();
+
+        if (!response.ok) {
+            throw new Error(`GitHub API error: ${response.status}`);
         }
-        
-        try {
-            const db = JSON.parse(data);
-            
-            // Verificar que el objeto tenga la estructura correcta
-            if (!db.categorias || !db.vendedoras || !db.productos || !db.ventas) {
-                console.error('❌ Estructura de database.json inválida, restaurando...');
-                return restaurarDesdeBackup();
-            }
-            
-            console.log('📖 Base de datos leída correctamente');
-            return db;
-            
-        } catch (parseError) {
-            console.error('❌ Error parseando database.json:', parseError);
-            return restaurarDesdeBackup();
-        }
-        
+
+        const data = await response.json();
+        // El contenido viene en base64
+        const content = Buffer.from(data.content, 'base64').toString('utf8');
+        return JSON.parse(content);
     } catch (error) {
-        console.error('❌ Error crítico leyendo database.json:', error);
-        return restaurarDesdeBackup();
+        console.error('❌ Error leyendo de GitHub:', error);
+        // En caso de error, devolvemos estructura vacía (pero no debería ocurrir)
+        return { categorias: [], vendedoras: [], productos: [], ventas: [] };
     }
 }
 
-function restaurarDesdeBackup() {
+async function escribirDB(db) {
     try {
-        const backupFile = DB_FILE.replace('.json', '_backup.json');
-        if (fs.existsSync(backupFile)) {
-            console.log('🔄 Restaurando desde backup...');
-            const backupData = fs.readFileSync(backupFile, 'utf8');
-            const backup = JSON.parse(backupData);
-            
-            // Verificar que el backup sea válido
-            if (backup.categorias && backup.vendedoras && backup.productos) {
-                fs.writeFileSync(DB_FILE, backupData);
-                console.log('✅ Backup restaurado correctamente');
-                return backup;
+        // Primero obtenemos el archivo actual para conocer su SHA
+        const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/${GITHUB_PATH}`;
+        const getResponse = await fetch(url, {
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json'
             }
-        }
-    } catch (backupError) {
-        console.error('❌ Error restaurando backup:', backupError);
-    }
-    
-    // Si todo falla, crear desde cero
-    console.log('⚠️ Creando base de datos desde cero...');
-    const freshDB = {
-        categorias: [
-            { id: 'cat_1', nombre: 'Ropa', descripcion: 'Prendas de vestir', activa: true },
-            { id: 'cat_2', nombre: 'Calzado', descripcion: 'Zapatos y zapatillas', activa: true },
-            { id: 'cat_3', nombre: 'Accesorios', descripcion: 'Bolsos, carteras, joyas', activa: true },
-            { id: 'cat_4', nombre: 'Electrónica', descripcion: 'Dispositivos electrónicos', activa: true },
-            { id: 'cat_5', nombre: 'Hogar', descripcion: 'Artículos para el hogar', activa: true },
-            { id: 'cat_6', nombre: 'Otros', descripcion: 'Productos varios', activa: true }
-        ],
-        vendedoras: [
-            { id: 'v_1', nombre: 'María González', usuario: 'maria_g', password: '123456', status: 'activa', tienda: 'Tienda Centro' },
-            { id: 'v_2', nombre: 'Ana Rodríguez', usuario: 'ana_r', password: '123456', status: 'activa', tienda: 'Tienda Norte' }
-        ],
-        productos: [
-            { 
-                id: 'p_1', 
-                nombre: 'PRODUCTO DE PRUEBA', 
-                categoria: 'cat_1', 
-                precio: 99.99, 
-                stock: 100, 
-                minStock: 10, 
-                status: 'activo' 
-            }
-        ],
-        ventas: []
-    };
-    fs.writeFileSync(DB_FILE, JSON.stringify(freshDB, null, 2));
-    console.log('✅ Base de datos creada desde cero');
-    return freshDB;
-}
+        });
 
-function escribirDB(data) {
-    try {
-        // Siempre hacer backup ANTES de escribir
-        if (fs.existsSync(DB_FILE)) {
-            const backupFile = DB_FILE.replace('.json', '_backup.json');
-            fs.copyFileSync(DB_FILE, backupFile);
-            console.log('💾 Backup creado');
+        let sha = null;
+        if (getResponse.status === 200) {
+            const existing = await getResponse.json();
+            sha = existing.sha;
         }
-        
-        // Validar que los datos tengan la estructura correcta
-        if (!data.categorias || !data.vendedoras || !data.productos || !data.ventas) {
-            console.error('❌ Intento de guardar datos inválidos');
+
+        // Codificar el contenido a base64
+        const content = Buffer.from(JSON.stringify(db, null, 2)).toString('base64');
+
+        const body = {
+            message: 'Actualización automática desde servidor',
+            content: content,
+            sha: sha // si es null, creará el archivo
+        };
+
+        const putResponse = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+        });
+
+        if (!putResponse.ok) {
+            const errorText = await putResponse.text();
+            console.error('❌ Error escribiendo en GitHub:', errorText);
             return false;
         }
-        
-        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-        console.log('✅ Cambios guardados en database.json');
+
+        console.log('✅ Datos guardados en GitHub');
         return true;
     } catch (error) {
-        console.error('❌ Error guardando database.json:', error);
+        console.error('❌ Error escribiendo en GitHub:', error);
         return false;
     }
 }
 
 // ========== RUTAS PÚBLICAS ==========
-app.get('/', (req, res) => {
-    const db = leerDB();
+app.get('/', async (req, res) => {
+    const db = await leerDB();
     res.json({
-        mensaje: '✅ SERVIDOR CON PERSISTENCIA JSON',
+        mensaje: '✅ SERVIDOR CON GITHUB COMO BD',
         timestamp: new Date().toISOString(),
         categorias: db.categorias.length,
         vendedoras: db.vendedoras.length,
         productos: db.productos.length,
-        archivo: 'database.json'
+        repo: GITHUB_REPO
     });
 });
 
 // ========== RUTAS PARA CATEGORÍAS ==========
-
-// 1. GET /api/categorias - Para vendedoras (solo activas)
-app.get('/api/categorias', (req, res) => {
-    console.log('📥 GET /api/categorias - Solicitado por vendedora');
-    const db = leerDB();
+app.get('/api/categorias', async (req, res) => {
+    const db = await leerDB();
     const categoriasActivas = db.categorias.filter(c => c.activa !== false);
-    console.log(`📤 Enviando ${categoriasActivas.length} categorías activas`);
     res.json(categoriasActivas);
 });
 
-// 2. GET /api/dueno/categorias - Para dueño (todas)
-app.get('/api/dueno/categorias', (req, res) => {
-    console.log('📥 GET /api/dueno/categorias - Solicitado por dueño');
-    const db = leerDB();
-    console.log(`📤 Enviando ${db.categorias.length} categorías`);
+app.get('/api/dueno/categorias', async (req, res) => {
+    const db = await leerDB();
     res.json(db.categorias);
 });
 
-// 3. POST /api/dueno/categorias - CREAR categoría
-app.post('/api/dueno/categorias', (req, res) => {
-    console.log('📥 POST /api/dueno/categorias - Crear categoría:', req.body);
+app.post('/api/dueno/categorias', async (req, res) => {
     const { nombre, descripcion } = req.body;
-    const db = leerDB();
+    const db = await leerDB();
     
     if (!nombre) {
         return res.status(400).json({ error: 'El nombre es obligatorio' });
@@ -199,24 +149,21 @@ app.post('/api/dueno/categorias', (req, res) => {
     
     const nuevaCategoria = {
         id: `cat_${Date.now()}`,
-        nombre: nombre,
+        nombre,
         descripcion: descripcion || '',
         activa: true
     };
     
     db.categorias.push(nuevaCategoria);
-    escribirDB(db);
+    await escribirDB(db);
     
-    console.log('✅ Categoría creada:', nuevaCategoria);
     res.json({ success: true, categoria: nuevaCategoria });
 });
 
-// 4. PUT /api/dueno/categorias/:id - EDITAR categoría
-app.put('/api/dueno/categorias/:id', (req, res) => {
-    console.log('📥 PUT /api/dueno/categorias/:id - Actualizar:', req.params.id, req.body);
+app.put('/api/dueno/categorias/:id', async (req, res) => {
     const { id } = req.params;
     const { nombre, descripcion, activa } = req.body;
-    const db = leerDB();
+    const db = await leerDB();
     
     const index = db.categorias.findIndex(c => c.id === id);
     if (index === -1) {
@@ -230,22 +177,17 @@ app.put('/api/dueno/categorias/:id', (req, res) => {
         activa: activa !== undefined ? activa : db.categorias[index].activa
     };
     
-    escribirDB(db);
-    console.log('✅ Categoría actualizada:', db.categorias[index]);
+    await escribirDB(db);
     res.json({ success: true, categoria: db.categorias[index] });
 });
 
-// 5. DELETE /api/dueno/categorias/:id - ELIMINAR categoría
-app.delete('/api/dueno/categorias/:id', (req, res) => {
-    console.log('📥 DELETE /api/dueno/categorias/:id - Eliminar:', req.params.id);
+app.delete('/api/dueno/categorias/:id', async (req, res) => {
     const { id } = req.params;
-    const db = leerDB();
+    const db = await leerDB();
     
-    // Verificar si hay productos usando esta categoría
     const productosUsando = db.productos.filter(p => p.categoria === id);
     if (productosUsando.length > 0) {
-        console.log('❌ No se puede eliminar: productos usándola:', productosUsando.map(p => p.nombre));
-        return res.status(400).json({ 
+        return res.status(400).json({
             error: 'No se puede eliminar: hay productos usando esta categoría',
             productos: productosUsando.map(p => p.nombre)
         });
@@ -257,24 +199,21 @@ app.delete('/api/dueno/categorias/:id', (req, res) => {
     }
     
     db.categorias.splice(index, 1);
-    escribirDB(db);
+    await escribirDB(db);
     
-    console.log('✅ Categoría eliminada');
     res.json({ success: true });
 });
 
 // ========== RUTAS PARA VENDEDORAS ==========
-app.post('/api/login', (req, res) => {
-    console.log('📥 POST /api/login - Intento de login:', req.body.usuario);
+app.post('/api/login', async (req, res) => {
     const { usuario, password } = req.body;
-    const db = leerDB();
+    const db = await leerDB();
     
-    const vendedora = db.vendedoras.find(v => 
+    const vendedora = db.vendedoras.find(v =>
         v.usuario === usuario && v.password === password && v.status === 'activa'
     );
     
     if (vendedora) {
-        console.log('✅ Login exitoso:', vendedora.nombre);
         res.json({
             success: true,
             usuario: {
@@ -285,32 +224,22 @@ app.post('/api/login', (req, res) => {
             }
         });
     } else {
-        console.log('❌ Login fallido:', usuario);
         res.status(401).json({ success: false, error: 'Credenciales incorrectas' });
     }
 });
 
-app.get('/api/productos', (req, res) => {
-    console.log('📥 GET /api/productos - Solicitado por vendedora');
-    const db = leerDB();
-    
-    // Enriquecer productos con nombre de categoría
+app.get('/api/productos', async (req, res) => {
+    const db = await leerDB();
     const productosConCategoria = db.productos.map(p => {
         const categoria = db.categorias.find(c => c.id === p.categoria);
-        return {
-            ...p,
-            categoria_nombre: categoria ? categoria.nombre : 'Sin categoría'
-        };
+        return { ...p, categoria_nombre: categoria ? categoria.nombre : 'Sin categoría' };
     });
-    
-    console.log(`📤 Enviando ${productosConCategoria.length} productos`);
     res.json(productosConCategoria);
 });
 
 // ========== RUTAS PARA DUEÑO - VENDEDORAS ==========
-app.get('/api/dueno/vendedoras', (req, res) => {
-    console.log('📥 GET /api/dueno/vendedoras');
-    const db = leerDB();
+app.get('/api/dueno/vendedoras', async (req, res) => {
+    const db = await leerDB();
     const vendedorasSinPass = db.vendedoras.map(v => ({
         id: v.id,
         nombre: v.nombre,
@@ -321,10 +250,9 @@ app.get('/api/dueno/vendedoras', (req, res) => {
     res.json(vendedorasSinPass);
 });
 
-app.post('/api/dueno/vendedoras', (req, res) => {
-    console.log('📥 POST /api/dueno/vendedoras - Crear:', req.body);
+app.post('/api/dueno/vendedoras', async (req, res) => {
     const { nombre, usuario, password, tienda } = req.body;
-    const db = leerDB();
+    const db = await leerDB();
     
     const existe = db.vendedoras.find(v => v.usuario === usuario);
     if (existe) {
@@ -341,9 +269,8 @@ app.post('/api/dueno/vendedoras', (req, res) => {
     };
     
     db.vendedoras.push(nuevaVendedora);
-    escribirDB(db);
+    await escribirDB(db);
     
-    console.log('✅ Vendedora creada:', nuevaVendedora.nombre);
     res.json({
         success: true,
         vendedora: {
@@ -356,10 +283,9 @@ app.post('/api/dueno/vendedoras', (req, res) => {
     });
 });
 
-app.delete('/api/dueno/vendedoras/:id', (req, res) => {
-    console.log('📥 DELETE /api/dueno/vendedoras/:id - Eliminar:', req.params.id);
+app.delete('/api/dueno/vendedoras/:id', async (req, res) => {
     const { id } = req.params;
-    const db = leerDB();
+    const db = await leerDB();
     
     const index = db.vendedoras.findIndex(v => v.id === id);
     if (index === -1) {
@@ -367,46 +293,37 @@ app.delete('/api/dueno/vendedoras/:id', (req, res) => {
     }
     
     db.vendedoras.splice(index, 1);
-    escribirDB(db);
-    console.log('✅ Vendedora eliminada');
+    await escribirDB(db);
     res.json({ success: true });
 });
 
 // ========== RUTAS PARA DUEÑO - PRODUCTOS ==========
-app.get('/api/dueno/productos', (req, res) => {
-    console.log('📥 GET /api/dueno/productos');
-    const db = leerDB();
+app.get('/api/dueno/productos', async (req, res) => {
+    const db = await leerDB();
     const productosConCategoria = db.productos.map(p => {
         const categoria = db.categorias.find(c => c.id === p.categoria);
-        return {
-            ...p,
-            categoria_nombre: categoria ? categoria.nombre : 'Sin categoría'
-        };
+        return { ...p, categoria_nombre: categoria ? categoria.nombre : 'Sin categoría' };
     });
     res.json(productosConCategoria);
 });
 
-app.post('/api/dueno/productos', (req, res) => {
-    console.log('📥 POST /api/dueno/productos - Crear:', req.body);
+app.post('/api/dueno/productos', async (req, res) => {
     const { nombre, categoria, precio, stock, minStock } = req.body;
-    const db = leerDB();
+    const db = await leerDB();
     
     if (!nombre || !precio || stock === undefined) {
         return res.status(400).json({ error: 'Nombre, precio y stock son obligatorios' });
     }
     
-    // Si no se especifica categoría o no existe, usar null
     let categoriaId = null;
     if (categoria) {
         const categoriaValida = db.categorias.find(c => c.id === categoria);
-        if (categoriaValida) {
-            categoriaId = categoria;
-        }
+        if (categoriaValida) categoriaId = categoria;
     }
     
     const nuevoProducto = {
         id: `p_${Date.now()}`,
-        nombre: nombre,
+        nombre,
         categoria: categoriaId,
         precio: parseFloat(precio),
         stock: parseInt(stock),
@@ -415,27 +332,17 @@ app.post('/api/dueno/productos', (req, res) => {
     };
     
     db.productos.push(nuevoProducto);
-    escribirDB(db);
+    await escribirDB(db);
     
-    const categoriaNombre = categoriaId ? 
-        (db.categorias.find(c => c.id === categoriaId)?.nombre || 'Sin categoría') : 
-        'Sin categoría';
+    const categoriaNombre = categoriaId ? (db.categorias.find(c => c.id === categoriaId)?.nombre || 'Sin categoría') : 'Sin categoría';
     
-    console.log('✅ Producto creado:', nuevoProducto.nombre);
-    res.json({
-        success: true,
-        producto: {
-            ...nuevoProducto,
-            categoria_nombre: categoriaNombre
-        }
-    });
+    res.json({ success: true, producto: { ...nuevoProducto, categoria_nombre: categoriaNombre } });
 });
 
-app.put('/api/dueno/productos/:id', (req, res) => {
-    console.log('📥 PUT /api/dueno/productos/:id - Actualizar:', req.params.id, req.body);
+app.put('/api/dueno/productos/:id', async (req, res) => {
     const { id } = req.params;
     const { nombre, precio, stock, categoria, minStock } = req.body;
-    const db = leerDB();
+    const db = await leerDB();
     
     const index = db.productos.findIndex(p => p.id === id);
     if (index === -1) {
@@ -451,30 +358,18 @@ app.put('/api/dueno/productos/:id', (req, res) => {
         minStock: minStock !== undefined ? parseInt(minStock) : db.productos[index].minStock
     };
     
-    db.productos[index].status = db.productos[index].stock <= db.productos[index].minStock 
-        ? 'bajo stock' 
-        : 'activo';
+    db.productos[index].status = db.productos[index].stock <= db.productos[index].minStock ? 'bajo stock' : 'activo';
     
-    escribirDB(db);
+    await escribirDB(db);
     
-    const categoriaNombre = db.productos[index].categoria ? 
-        (db.categorias.find(c => c.id === db.productos[index].categoria)?.nombre || 'Sin categoría') : 
-        'Sin categoría';
+    const categoriaNombre = db.productos[index].categoria ? (db.categorias.find(c => c.id === db.productos[index].categoria)?.nombre || 'Sin categoría') : 'Sin categoría';
     
-    console.log('✅ Producto actualizado:', db.productos[index].nombre);
-    res.json({ 
-        success: true, 
-        producto: {
-            ...db.productos[index],
-            categoria_nombre: categoriaNombre
-        }
-    });
+    res.json({ success: true, producto: { ...db.productos[index], categoria_nombre: categoriaNombre } });
 });
 
-app.delete('/api/dueno/productos/:id', (req, res) => {
-    console.log('📥 DELETE /api/dueno/productos/:id - Eliminar:', req.params.id);
+app.delete('/api/dueno/productos/:id', async (req, res) => {
     const { id } = req.params;
-    const db = leerDB();
+    const db = await leerDB();
     
     const index = db.productos.findIndex(p => p.id === id);
     if (index === -1) {
@@ -482,23 +377,17 @@ app.delete('/api/dueno/productos/:id', (req, res) => {
     }
     
     db.productos.splice(index, 1);
-    escribirDB(db);
-    
-    console.log('✅ Producto eliminado');
+    await escribirDB(db);
     res.json({ success: true });
 });
 
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, () => {
     console.log(`\n🚀===========================================`);
-    console.log(`✅ SERVIDOR CON PERSISTENCIA REAL`);
+    console.log(`✅ SERVIDOR CON GITHUB COMO BD`);
     console.log(`=============================================`);
     console.log(`🔗 URL: http://localhost:${PORT}`);
-    console.log(`📁 Archivo: ${DB_FILE}`);
-    console.log(`💾 Backup automático: database_backup.json`);
-    console.log(`\n📦 DATOS INICIALES (solo si no existe archivo):`);
-    console.log(`   - 6 categorías predefinidas`);
-    console.log(`   - 2 vendedoras de prueba`);
-    console.log(`   - 1 producto de prueba`);
+    console.log(`📁 Repositorio: ${GITHUB_REPO}`);
+    console.log(`🔑 Token configurado: ${GITHUB_TOKEN ? 'Sí' : 'No'}`);
     console.log(`=============================================\n`);
 });
