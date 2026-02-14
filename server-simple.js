@@ -467,6 +467,149 @@ app.delete('/api/dueno/productos/:id', async (req, res) => {
     }
 });
 
+// ========== RUTAS PARA REPORTES ==========
+
+// Obtener todos los reportes (para dueño)
+app.get('/api/reportes', async (req, res) => {
+    try {
+        const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/reporte.json`;
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+
+        if (response.status === 404) {
+            return res.json([]);
+        }
+
+        const data = await response.json();
+        const content = Buffer.from(data.content, 'base64').toString('utf8');
+        const reportes = JSON.parse(content);
+        
+        res.json(reportes);
+    } catch (error) {
+        console.error('Error leyendo reportes:', error);
+        res.status(500).json({ error: 'Error al leer reportes' });
+    }
+});
+
+// Guardar un nuevo reporte (desde vendedora)
+app.post('/api/reportes', async (req, res) => {
+    try {
+        const nuevoReporte = req.body;
+        
+        // Validar datos mínimos
+        if (!nuevoReporte.titulo || !nuevoReporte.vendedora || !nuevoReporte.fecha) {
+            return res.status(400).json({ error: 'Datos incompletos' });
+        }
+
+        // Leer reportes existentes
+        const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/reporte.json`;
+        let reportes = [];
+        let sha = null;
+
+        const getResponse = await fetch(url, {
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+
+        if (getResponse.status === 200) {
+            const existing = await getResponse.json();
+            sha = existing.sha;
+            const content = Buffer.from(existing.content, 'base64').toString('utf8');
+            reportes = JSON.parse(content);
+        }
+
+        // Agregar nuevo reporte
+        reportes.push(nuevoReporte);
+
+        // Guardar en GitHub
+        const content = Buffer.from(JSON.stringify(reportes, null, 2)).toString('base64');
+        const body = {
+            message: `Nuevo reporte de ${nuevoReporte.vendedora} - ${new Date().toLocaleString()}`,
+            content: content,
+            sha: sha
+        };
+
+        const putResponse = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+        });
+
+        if (!putResponse.ok) {
+            throw new Error('Error al guardar reporte');
+        }
+
+        res.json({ success: true, reporte: nuevoReporte });
+    } catch (error) {
+        console.error('Error guardando reporte:', error);
+        res.status(500).json({ error: 'Error al guardar reporte' });
+    }
+});
+
+// Eliminar un reporte (para dueño)
+app.delete('/api/reportes/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const url = `https://api.github.com/repos/${GITHUB_REPO}/contents/reporte.json`;
+        const getResponse = await fetch(url, {
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+
+        if (getResponse.status !== 200) {
+            return res.status(404).json({ error: 'No hay reportes' });
+        }
+
+        const existing = await getResponse.json();
+        const sha = existing.sha;
+        const content = Buffer.from(existing.content, 'base64').toString('utf8');
+        let reportes = JSON.parse(content);
+
+        // Filtrar el reporte a eliminar
+        reportes = reportes.filter(r => r.id !== id);
+
+        // Guardar cambios
+        const newContent = Buffer.from(JSON.stringify(reportes, null, 2)).toString('base64');
+        const body = {
+            message: `Reporte eliminado - ${new Date().toLocaleString()}`,
+            content: newContent,
+            sha: sha
+        };
+
+        const putResponse = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+        });
+
+        if (!putResponse.ok) {
+            throw new Error('Error al eliminar reporte');
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error eliminando reporte:', error);
+        res.status(500).json({ error: 'Error al eliminar reporte' });
+    }
+});
+
 // ========== INICIAR SERVIDOR ==========
 app.listen(PORT, () => {
     console.log(`\n🚀===========================================`);
